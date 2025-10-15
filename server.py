@@ -8,6 +8,14 @@ import textwrap
 app = Flask(__name__)
 app.secret_key = "fusion-mcp-session-key"
 
+# Clear log file on server startup
+log_file = "auto_runner/log.txt"
+try:
+    with open(log_file, "w") as f:
+        f.write("🚀 Server started - Log cleared\n")
+except:
+    pass
+
 # Initialize OpenAI client
 client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
@@ -22,6 +30,49 @@ def home():
 @app.route("/reset", methods=["POST"])
 def reset():
     session.clear()
+    
+    # Clear the Fusion log file
+    log_file = "auto_runner/log.txt"
+    try:
+        with open(log_file, "w") as f:
+            f.write("🔄 Log cleared by Reset Design\n")
+    except:
+        pass
+    
+    # Generate a cleanup script to clear Fusion
+    cleanup_script = """import adsk.core, adsk.fusion, traceback
+
+def run(context):
+    app = adsk.core.Application.get()
+    ui = app.userInterface
+    try:
+        design = app.activeProduct
+        root = design.rootComponent
+        
+        # Delete all sketches
+        while root.sketches.count > 0:
+            root.sketches.item(0).deleteMe()
+        
+        # Delete all bodies
+        while root.bRepBodies.count > 0:
+            root.bRepBodies.item(0).deleteMe()
+        
+        # Delete all features
+        while root.features.count > 0:
+            root.features.item(0).deleteMe()
+        
+        ui.messageBox('✅ Design cleared!')
+    except Exception as e:
+        if ui:
+            ui.messageBox('❌ Reset Error: {}'.format(str(e)))
+"""
+    
+    # Save the cleanup script
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"generated_scripts/reset_{timestamp}.py"
+    with open(filename, "w") as f:
+        f.write(cleanup_script)
+    
     return jsonify({"status": "reset"})
 
 @app.route("/generate", methods=["POST"])
@@ -81,7 +132,8 @@ def generate_script():
         "innerProf = sketch.profiles.item(0)\n"
         "extrudes = rootComp.features.extrudeFeatures\n"
         "extInput = extrudes.createInput(innerProf, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)\n"
-        "extInput.setDistanceExtent(False, adsk.core.ValueInput.createByReal(-2))\n"
+        "distance = adsk.core.ValueInput.createByReal(2)\n"
+        "extInput.setOneSideExtent(adsk.fusion.ExtentDirections.NegativeExtentDirection, distance)\n"
         "extrudes.add(extInput)\n"
         "toolBody = rootComp.bRepBodies.item(rootComp.bRepBodies.count - 1)\n"
         "combineFeats = rootComp.features.combineFeatures\n"
