@@ -178,10 +178,10 @@ def generate_script():
     messages = [{"role": "system", "content": system_prompt}] + conversation
 
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4o",  # Upgraded to GPT-4o for better code generation
         messages=messages,
         temperature=0.2,
-        max_tokens=1000
+        max_tokens=1500  # Increased for more complex operations
     )
 
     raw_code = response.choices[0].message.content.strip()
