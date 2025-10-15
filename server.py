@@ -43,7 +43,8 @@ def reset():
     except:
         pass
     
-    # Generate a cleanup script to clear Fusion
+    # Generate a safer cleanup script
+    # Delete in correct order: features first (which deletes bodies), then orphaned sketches
     cleanup_script = """import adsk.core, adsk.fusion, traceback
 
 def run(context):
@@ -53,19 +54,40 @@ def run(context):
         design = app.activeProduct
         root = design.rootComponent
         
-        # Delete all sketches
-        while root.sketches.count > 0:
-            root.sketches.item(0).deleteMe()
+        # Collect items to delete (safer than deleting in a loop)
+        features_to_delete = []
+        for i in range(root.features.count):
+            features_to_delete.append(root.features.item(i))
         
-        # Delete all bodies
-        while root.bRepBodies.count > 0:
-            root.bRepBodies.item(0).deleteMe()
+        # Delete features (this will remove associated bodies)
+        for feat in features_to_delete:
+            try:
+                feat.deleteMe()
+            except:
+                pass  # Skip if already deleted or can't delete
         
-        # Delete all features
-        while root.features.count > 0:
-            root.features.item(0).deleteMe()
+        # Delete remaining sketches
+        sketches_to_delete = []
+        for i in range(root.sketches.count):
+            sketches_to_delete.append(root.sketches.item(i))
         
-        ui.messageBox('✅ Design cleared!')
+        for sketch in sketches_to_delete:
+            try:
+                sketch.deleteMe()
+            except:
+                pass
+        
+        # Delete any remaining bodies
+        bodies_to_delete = []
+        for i in range(root.bRepBodies.count):
+            bodies_to_delete.append(root.bRepBodies.item(i))
+        
+        for body in bodies_to_delete:
+            try:
+                body.deleteMe()
+            except:
+                pass
+                
     except Exception as e:
         if ui:
             ui.messageBox('❌ Reset Error: {}'.format(str(e)))
