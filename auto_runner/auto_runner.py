@@ -5,8 +5,12 @@ running = True
 log_file = "/Users/devatreya/Desktop/Projects/MCP/auto_runner/log.txt"
 
 def log(msg):
-    with open(log_file, "a") as f:
-        f.write(msg + "\n")
+    try:
+        timestamp = time.strftime("%H:%M:%S")
+        with open(log_file, "a") as f:
+            f.write(f"[{timestamp}] {msg}\n")
+    except Exception as e:
+        pass  # Silently fail if logging fails
 
 def monitor_script_file():
     app = adsk.core.Application.get()
@@ -28,6 +32,7 @@ def monitor_script_file():
                         code = f.read()
 
                     try:
+                        log("📝 Executing script...")
                         # Inject Fusion globals into exec scope
                         injected_scope = {
                             "adsk": adsk,
@@ -41,14 +46,16 @@ def monitor_script_file():
                         if "run" in injected_scope:
                             injected_scope["run"](None)
                             log("✅ run(context) executed successfully.")
-                            ui.messageBox("✅ fusion_auto_run.py executed.")
+                            # Only show message box on errors, not on success
                         else:
                             log("⚠️ No run(context) function found in script.")
                             ui.messageBox("⚠️ Script loaded but no run(context) found.")
 
                     except Exception as e:
-                        ui.messageBox(f"❌ Script error:\n{e}")
-                        log("❌ Script exec error: " + str(e))
+                        error_msg = f"❌ Script error: {str(e)}"
+                        log(error_msg)
+                        log(traceback.format_exc())
+                        ui.messageBox(error_msg)
 
             time.sleep(3)
 
