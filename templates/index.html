@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Fusion 360 Design Assistant</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 2rem;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        #chat {
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 1rem;
+            background-color: #fff;
+            border-radius: 8px;
+            overflow-y: auto;
+            max-height: 60vh;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .message {
+            margin-bottom: 1rem;
+        }
+        .user {
+            color: #0a58ca;
+        }
+        .assistant {
+            color: #198754;
+            white-space: pre-wrap;
+        }
+        #form {
+            max-width: 800px;
+            margin: 1rem auto;
+            display: flex;
+            flex-direction: column;
+        }
+        textarea {
+            padding: 0.75rem;
+            font-size: 1rem;
+            resize: vertical;
+            min-height: 60px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            margin-bottom: 1rem;
+        }
+        button {
+            padding: 0.75rem;
+            font-size: 1rem;
+            background-color: #0a58ca;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button.secondary {
+            background-color: #dc3545;
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <h1>Fusion 360 Conversational MCP</h1>
+
+    <div id="chat"></div>
+
+    <form id="form">
+        <textarea id="prompt" placeholder="Describe your design change..."></textarea>
+        <button type="submit">Generate</button>
+        <button type="button" class="secondary" id="resetBtn">Reset Design</button>
+    </form>
+
+    <script>
+        const form = document.getElementById('form');
+        const promptInput = document.getElementById('prompt');
+        const chat = document.getElementById('chat');
+        const resetBtn = document.getElementById('resetBtn');
+
+        let history = [];
+
+        form.onsubmit = async (e) => {
+            e.preventDefault();
+            const prompt = promptInput.value.trim();
+            if (!prompt) return;
+
+            history.push({ role: 'user', content: prompt });
+            updateChat();
+
+            const response = await fetch('/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt })
+            });
+
+            const data = await response.json();
+            history.push({ role: 'assistant', content: data.script });
+            updateChat();
+            promptInput.value = '';
+        };
+
+        resetBtn.onclick = async () => {
+            await fetch('/reset', { method: 'POST' });
+            history = [];
+            updateChat();
+        };
+
+        function updateChat() {
+            chat.innerHTML = '';
+            history.forEach(msg => {
+                const div = document.createElement('div');
+                div.className = 'message ' + msg.role;
+                div.innerHTML = `<strong>${msg.role}:</strong> ${msg.content}`;
+                chat.appendChild(div);
+            });
+            chat.scrollTop = chat.scrollHeight;
+        }
+    </script>
+</body>
+</html>

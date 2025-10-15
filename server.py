@@ -1,0 +1,230 @@
+from flask import Flask, request, jsonify, render_template, session
+from openai import OpenAI
+import os
+from datetime import datetime
+import re
+import textwrap
+
+app = Flask(__name__)
+app.secret_key = "fusion-mcp-session-key"
+
+# Initialize OpenAI client
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    organization=os.getenv("OPENAI_ORG_ID"),
+    project=os.getenv("OPENAI_PROJECT_ID")
+)
+
+@app.route("/")
+def home():
+    return render_template("index.html")
+
+@app.route("/reset", methods=["POST"])
+def reset():
+    session.clear()
+    return jsonify({"status": "reset"})
+
+@app.route("/generate", methods=["POST"])
+def generate_script():
+    user_prompt = request.json["prompt"]
+
+    if "conversation" not in session:
+        session["conversation"] = []
+    if "model_summary" not in session:
+        session["model_summary"] = []
+
+    conversation = session["conversation"]
+    model_summary = session["model_summary"]
+
+    model_summary_text = "\n".join(f"- {item}" for item in model_summary)
+
+    system_prompt = (
+        "You are a Python assistant for Fusion 360. "
+        "Generate ONLY the body of Python code (no imports, no def run, no setup - those are added automatically). "
+        "CRITICAL REQUIREMENTS:\n"
+        "1. Do NOT write setup code (design/rootComp/sketches are already defined)\n"
+        "2. Do NOT write 'def run(context):' or 'import' statements\n"
+        "3. Write ONLY the core logic - no markdown, explanations, or comments\n"
+        "4. Use centimeters for all measurements\n"
+        "5. To find the TOP FACE of a cube, find the face with maximum Z normal:\n"
+        "   topFace = None\n"
+        "   for face in rootComp.bRepBodies.item(0).faces:\n"
+        "       if face.geometry.normal.z > 0.9:\n"
+        "           topFace = face\n"
+        "           break\n"
+        "6. For HOLES/CUTS use Boolean subtraction with Combine feature:\n"
+        "   a) Create cutting body as NewBodyFeatureOperation with NEGATIVE distance\n"
+        "   b) Get the newly created tool body (last body in collection)\n"
+        "   c) Use combineFeatures with CutFeatureOperation to subtract it\n"
+        "   d) Set isKeepToolBodies = False to remove the cutting body\n"
+        "7. Center sketches at origin (0,0,0) for simplicity\n\n"
+        "EXAMPLE - Cube centered at origin:\n"
+        "xyPlane = rootComp.xYConstructionPlane\n"
+        "sketch = sketches.add(xyPlane)\n"
+        "lines = sketch.sketchCurves.sketchLines\n"
+        "rect = lines.addTwoPointRectangle(adsk.core.Point3D.create(-5, -5, 0), adsk.core.Point3D.create(5, 5, 0))\n"
+        "prof = sketch.profiles.item(0)\n"
+        "extrudes = rootComp.features.extrudeFeatures\n"
+        "extInput = extrudes.createInput(prof, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)\n"
+        "distance = adsk.core.ValueInput.createByReal(10)\n"
+        "extInput.setDistanceExtent(False, distance)\n"
+        "extrudes.add(extInput)\n\n"
+        "EXAMPLE - Hole on top (diameter 5cm, depth 2cm) using Boolean cut:\n"
+        "targetBody = rootComp.bRepBodies.item(0)\n"
+        "topFace = None\n"
+        "for face in targetBody.faces:\n"
+        "    if face.geometry.normal.z > 0.9:\n"
+        "        topFace = face\n"
+        "        break\n"
+        "sketch = sketches.add(topFace)\n"
+        "sketch.sketchCurves.sketchCircles.addByCenterRadius(adsk.core.Point3D.create(0, 0, 0), 2.5)\n"
+        "innerProf = sketch.profiles.item(0)\n"
+        "extrudes = rootComp.features.extrudeFeatures\n"
+        "extInput = extrudes.createInput(innerProf, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)\n"
+        "extInput.setDistanceExtent(False, adsk.core.ValueInput.createByReal(-2))\n"
+        "extrudes.add(extInput)\n"
+        "toolBody = rootComp.bRepBodies.item(rootComp.bRepBodies.count - 1)\n"
+        "combineFeats = rootComp.features.combineFeatures\n"
+        "toolBodies = adsk.core.ObjectCollection.create()\n"
+        "toolBodies.add(toolBody)\n"
+        "combineInput = combineFeats.createInput(targetBody, toolBodies)\n"
+        "combineInput.operation = adsk.fusion.FeatureOperations.CutFeatureOperation\n"
+        "combineInput.isKeepToolBodies = False\n"
+        "combineFeats.add(combineInput)\n\n"
+        "Current model state:\n" + model_summary_text
+    )
+
+    conversation.append({"role": "user", "content": user_prompt})
+    messages = [{"role": "system", "content": system_prompt}] + conversation
+
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=messages,
+        temperature=0.2,
+        max_tokens=1000
+    )
+
+    raw_code = response.choices[0].message.content.strip()
+    cleaned_code = clean_generated_code(raw_code)
+    clear_model = any(keyword in user_prompt.lower() for keyword in ["create", "new", "start", "reset", "cube"])
+    wrapped_code = wrap_script_with_run(cleaned_code, clear_model=clear_model)
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"generated_scripts/script_{timestamp}.py"
+    with open(filename, "w") as f:
+        f.write(wrapped_code)
+
+    session["conversation"] = conversation + [{"role": "assistant", "content": cleaned_code}]
+    session["model_summary"] = update_summary(model_summary, user_prompt)
+
+    return jsonify({"status": "success", "script": wrapped_code, "file": filename})
+
+def clean_generated_code(raw_code):
+    # Remove markdown code fences
+    raw = re.sub(r"```[^\n]*\n", "", raw_code)
+    raw = re.sub(r"```", "", raw)
+
+    lines = raw.splitlines()
+    cleaned = []
+    skip_next_empty = False
+    
+    for line in lines:
+        l = line.strip().lower()
+        
+        # Skip friendly text/boilerplate
+        if l.startswith(("sure", "here is", "here's", "this script", "note:", "you can use")):
+            skip_next_empty = True
+            continue
+        
+        # Skip nested run() definitions (wrapper adds this)
+        if "def run(" in l:
+            skip_next_empty = True
+            continue
+            
+        # Skip adsk imports (wrapper adds this)
+        if l.startswith("import") and "adsk" in l:
+            skip_next_empty = True
+            continue
+        
+        # Skip setup code (wrapper adds this)
+        if l in ["design = app.activeproduct", "rootcomp = design.rootcomponent", "sketches = rootcomp.sketches"]:
+            skip_next_empty = True
+            continue
+        
+        # Skip empty lines after removed content
+        if not l and skip_next_empty:
+            skip_next_empty = False
+            continue
+            
+        cleaned.append(line)
+
+    return "\n".join(cleaned)
+
+def normalize_indentation(code: str, indent: int = 8) -> str:
+    dedented = textwrap.dedent(code).strip()
+    return "\n".join(" " * indent + line if line else "" for line in dedented.splitlines())
+
+def wrap_script_with_run(cleaned_code, clear_model=True):
+    cleanup_block = '''
+design = app.activeProduct
+root = design.rootComponent
+for sketch in root.sketches:
+    sketch.deleteMe()
+for body in root.bRepBodies:
+    body.deleteMe()
+for feat in root.features:
+    feat.deleteMe()
+'''
+    
+    # Always include setup code to ensure variables are defined
+    setup_block = '''
+design = app.activeProduct
+rootComp = design.rootComponent
+sketches = rootComp.sketches
+'''
+
+    return (
+        "import adsk.core, adsk.fusion, traceback\n\n"
+        "def run(context):\n"
+        "    app = adsk.core.Application.get()\n"
+        "    ui = app.userInterface\n"
+        "    try:\n"
+        + (normalize_indentation(cleanup_block, indent=8) + "\n\n" if clear_model else "")
+        + normalize_indentation(setup_block, indent=8) + "\n\n"
+        + normalize_indentation(cleaned_code, indent=8)
+        + "\n"
+        "    except Exception as e:\n"
+        "        if ui:\n"
+        "            ui.messageBox('❌ Runtime Error: {}'.format(str(e)))\n"
+    )
+
+def update_summary(current_summary, user_input):
+    summary = current_summary.copy()
+    user_input_lower = user_input.lower()
+
+    if "cube" in user_input_lower or "box" in user_input_lower:
+        # Extract dimensions
+        size_match = re.findall(r"(\d+)\s*cm", user_input)
+        if size_match:
+            size = int(size_match[0])
+            summary.append(f"Cube {size}x{size}x{size} cm, centered at origin, extends from Z=0 to Z={size}")
+        else:
+            summary.append("Cube added at origin")
+    elif "hole" in user_input_lower:
+        diameter_match = re.findall(r"diameter.*?(\d+)\s*cm", user_input)
+        depth_match = re.findall(r"depth.*?(\d+)\s*cm", user_input)
+        hole_desc = "Hole"
+        if diameter_match:
+            hole_desc += f" diameter {diameter_match[0]}cm"
+        if depth_match:
+            hole_desc += f" depth {depth_match[0]}cm"
+        summary.append(hole_desc + " on top face")
+    elif "remove" in user_input_lower and "hole" in user_input_lower:
+        summary = [s for s in summary if "hole" not in s.lower()]
+    elif "taller" in user_input_lower or "shorter" in user_input_lower:
+        summary.append(f"Height adjustment: {user_input}")
+
+    return summary
+
+if __name__ == "__main__":
+    app.run(debug=True)

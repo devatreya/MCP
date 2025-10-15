@@ -1,0 +1,131 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2821
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 User Prompt: Create a 10mm x 5mm rectangle extruded to 2mm height\
+Python Script:\
+import adsk.core, adsk.fusion, traceback\
+def run(context):\
+    app = adsk.core.Application.get()\
+    ui  = app.userInterface\
+    design = app.activeProduct\
+    root = design.rootComponent\
+    sketch = root.sketches.add(root.xYConstructionPlane)\
+    sketch.sketchCurves.sketchLines.addTwoPointRectangle(\
+        adsk.core.Point3D.create(0, 0, 0),\
+        adsk.core.Point3D.create(1.0, 0.5, 0)\
+    )\
+    profile = sketch.profiles.item(0)\
+    extrudes = root.features.extrudeFeatures\
+    extInput = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)\
+    extInput.setDistanceExtent(False, adsk.core.ValueInput.createByReal(0.2))\
+    extrudes.add(extInput)\
+# End\
+\
+User Prompt: Create a cylinder with 5mm diameter and 10mm height\
+Python Script:\
+import adsk.core, adsk.fusion, traceback\
+def run(context):\
+    app = adsk.core.Application.get()\
+    design = app.activeProduct\
+    root = design.rootComponent\
+    sketch = root.sketches.add(root.xYConstructionPlane)\
+    sketch.sketchCurves.sketchCircles.addByCenterRadius(\
+        adsk.core.Point3D.create(0, 0, 0), 0.25\
+    )\
+    profile = sketch.profiles.item(0)\
+    extrudes = root.features.extrudeFeatures\
+    extInput = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)\
+    extInput.setDistanceExtent(False, adsk.core.ValueInput.createByReal(1.0))\
+    extrudes.add(extInput)\
+# End\
+\
+User Prompt: Create a 20mm x 10mm box with a hole in the center (5mm diameter)\
+Python Script:\
+import adsk.core, adsk.fusion, traceback\
+def run(context):\
+    app = adsk.core.Application.get()\
+    design = app.activeProduct\
+    root = design.rootComponent\
+    sketch = root.sketches.add(root.xYConstructionPlane)\
+    sketchLines = sketch.sketchCurves.sketchLines\
+    sketchLines.addTwoPointRectangle(\
+        adsk.core.Point3D.create(0, 0, 0),\
+        adsk.core.Point3D.create(2.0, 1.0, 0)\
+    )\
+    profile = sketch.profiles.item(0)\
+    extrudes = root.features.extrudeFeatures\
+    extInput = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)\
+    extInput.setDistanceExtent(False, adsk.core.ValueInput.createByReal(0.2))\
+    box = extrudes.add(extInput)\
+\
+    # Hole sketch\
+    centerSketch = root.sketches.add(root.xYConstructionPlane)\
+    centerSketch.sketchCurves.sketchCircles.addByCenterRadius(\
+        adsk.core.Point3D.create(1.0, 0.5, 0), 0.25\
+    )\
+    circleProfile = centerSketch.profiles.item(0)\
+    holeInput = extrudes.createInput(circleProfile, adsk.fusion.FeatureOperations.CutFeatureOperation)\
+    holeInput.setDistanceExtent(False, adsk.core.ValueInput.createByReal(0.2))\
+    extrudes.add(holeInput)\
+# End\
+\
+User Prompt: Create a 15mm x 15mm square with a 1mm chamfer on all edges\
+Python Script:\
+import adsk.core, adsk.fusion, traceback\
+def run(context):\
+    app = adsk.core.Application.get()\
+    design = app.activeProduct\
+    root = design.rootComponent\
+    sketch = root.sketches.add(root.xYConstructionPlane)\
+    sketch.sketchCurves.sketchLines.addTwoPointRectangle(\
+        adsk.core.Point3D.create(0, 0, 0),\
+        adsk.core.Point3D.create(1.5, 1.5, 0)\
+    )\
+    profile = sketch.profiles.item(0)\
+    extrudes = root.features.extrudeFeatures\
+    extInput = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)\
+    extInput.setDistanceExtent(False, adsk.core.ValueInput.createByReal(0.2))\
+    body = extrudes.add(extInput).bodies.item(0)\
+\
+    chamferFeats = root.features.chamferFeatures\
+    edges = adsk.core.ObjectCollection.create()\
+    for edge in body.edges:\
+        edges.add(edge)\
+    chamferInput = chamferFeats.createInput2()\
+    chamferInput.chamferEdgeSets.addEqualDistanceChamferEdgeSet(edges, adsk.core.ValueInput.createByReal(0.1), True)\
+    chamferFeats.add(chamferInput)\
+# End\
+\
+User Prompt: Create a 25mm x 10mm rectangle with two holes of 5mm diameter at both ends\
+Python Script:\
+import adsk.core, adsk.fusion, traceback\
+def run(context):\
+    app = adsk.core.Application.get()\
+    design = app.activeProduct\
+    root = design.rootComponent\
+    sketch = root.sketches.add(root.xYConstructionPlane)\
+    sketch.sketchCurves.sketchLines.addTwoPointRectangle(\
+        adsk.core.Point3D.create(0, 0, 0),\
+        adsk.core.Point3D.create(2.5, 1.0, 0)\
+    )\
+    profile = sketch.profiles.item(0)\
+    extrudes = root.features.extrudeFeatures\
+    extInput = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)\
+    extInput.setDistanceExtent(False, adsk.core.ValueInput.createByReal(0.2))\
+    extrudes.add(extInput)\
+\
+    # Hole sketch\
+    sketch2 = root.sketches.add(root.xYConstructionPlane)\
+    sketch2.sketchCurves.sketchCircles.addByCenterRadius(adsk.core.Point3D.create(0.5, 0.5, 0), 0.25)\
+    sketch2.sketchCurves.sketchCircles.addByCenterRadius(adsk.core.Point3D.create(2.0, 0.5, 0), 0.25)\
+    for i in range(2):\
+        profile = sketch2.profiles.item(i)\
+        cutInput = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)\
+        cutInput.setDistanceExtent(False, adsk.core.ValueInput.createByReal(0.2))\
+        extrudes.add(cutInput)\
+# End\
+}
