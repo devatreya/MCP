@@ -8,11 +8,13 @@ import textwrap
 app = Flask(__name__)
 app.secret_key = "fusion-mcp-session-key"
 
-# Clear log file on server startup
+# Log server startup (append, don't clear)
 log_file = "auto_runner/log.txt"
 try:
-    with open(log_file, "w") as f:
-        f.write("🚀 Server started - Log cleared\n")
+    with open(log_file, "a") as f:
+        f.write("\n" + "="*50 + "\n")
+        f.write("🚀 Flask server started\n")
+        f.write("="*50 + "\n")
 except:
     pass
 
@@ -31,11 +33,13 @@ def home():
 def reset():
     session.clear()
     
-    # Clear the Fusion log file
+    # Don't clear log file - just mark the reset in the log
     log_file = "auto_runner/log.txt"
     try:
-        with open(log_file, "w") as f:
-            f.write("🔄 Log cleared by Reset Design\n")
+        with open(log_file, "a") as f:
+            f.write("\n" + "-"*50 + "\n")
+            f.write("🔄 Reset Design clicked\n")
+            f.write("-"*50 + "\n")
     except:
         pass
     
@@ -104,7 +108,9 @@ def generate_script():
         "           topFace = face\n"
         "           break\n"
         "6. For HOLES/CUTS use Boolean subtraction with Combine feature:\n"
-        "   a) Create cutting body as NewBodyFeatureOperation with NEGATIVE distance\n"
+        "   a) Create cutting body with POSITIVE distance and NegativeExtentDirection\n"
+        "      distance = adsk.core.ValueInput.createByReal(2)  # POSITIVE VALUE\n"
+        "      extInput.setOneSideExtent(adsk.fusion.ExtentDirections.NegativeExtentDirection, distance)\n"
         "   b) Get the newly created tool body (last body in collection)\n"
         "   c) Use combineFeatures with CutFeatureOperation to subtract it\n"
         "   d) Set isKeepToolBodies = False to remove the cutting body\n"
