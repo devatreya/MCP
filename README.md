@@ -121,7 +121,4 @@ This project enables you to control Fusion 360 through natural language commands
 
 MIT
 
-## Contributing
-
-Contributions welcome! Please open an issue or PR.
 
