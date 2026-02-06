@@ -4,6 +4,13 @@ import os
 from datetime import datetime
 import re
 import textwrap
+import json
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 app = Flask(__name__)
 app.secret_key = "fusion-mcp-session-key"
@@ -115,6 +122,7 @@ def generate_script():
 
     model_summary_text = "\n".join(f"- {item}" for item in model_summary)
 
+    fusion_state = summarize_fusion_state(load_fusion_state())
     system_prompt = (
         "You are a Python assistant for Fusion 360. "
         "Generate ONLY the body of Python code (no imports, no def run, no setup - those are added automatically). "
@@ -137,6 +145,8 @@ def generate_script():
         "   c) Use combineFeatures with CutFeatureOperation to subtract it\n"
         "   d) Set isKeepToolBodies = False to remove the cutting body\n"
         "7. Center sketches at origin (0,0,0) for simplicity\n\n"
+        "Fusion model state (authoritative, from add-in):\n"
+        + fusion_state + "\n\n"
         "EXAMPLE - Cube centered at origin:\n"
         "xyPlane = rootComp.xYConstructionPlane\n"
         "sketch = sketches.add(xyPlane)\n"
@@ -171,7 +181,7 @@ def generate_script():
         "combineInput.operation = adsk.fusion.FeatureOperations.CutFeatureOperation\n"
         "combineInput.isKeepToolBodies = False\n"
         "combineFeats.add(combineInput)\n\n"
-        "Current model state:\n" + model_summary_text
+        "Current model state (from prompts):\n" + model_summary_text
     )
 
     conversation.append({"role": "user", "content": user_prompt})
@@ -186,7 +196,7 @@ def generate_script():
 
     raw_code = response.choices[0].message.content.strip()
     cleaned_code = clean_generated_code(raw_code)
-    clear_model = any(keyword in user_prompt.lower() for keyword in ["create", "new", "start", "reset", "cube"])
+    clear_model = should_clear_model(user_prompt, model_summary)
     wrapped_code = wrap_script_with_run(cleaned_code, clear_model=clear_model)
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -278,6 +288,33 @@ sketches = rootComp.sketches
         "            ui.messageBox('❌ Runtime Error: {}'.format(str(e)))\n"
     )
 
+def should_clear_model(user_prompt, model_summary):
+    p = user_prompt.lower()
+    explicit_reset = [
+        "reset",
+        "start over",
+        "start new",
+        "new design",
+        "clear design",
+        "from scratch",
+        "delete everything",
+    ]
+    if any(phrase in p for phrase in explicit_reset):
+        return True
+    if not model_summary:
+        seed_words = [
+            "create",
+            "make",
+            "build",
+            "new",
+            "cube",
+            "box",
+            "cylinder",
+            "sphere",
+        ]
+        return any(word in p for word in seed_words)
+    return False
+
 def update_summary(current_summary, user_input):
     summary = current_summary.copy()
     user_input_lower = user_input.lower()
@@ -305,6 +342,39 @@ def update_summary(current_summary, user_input):
         summary.append(f"Height adjustment: {user_input}")
 
     return summary
+
+def load_fusion_state():
+    state_path = os.path.join("auto_runner", "state.json")
+    try:
+        with open(state_path, "r") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def summarize_fusion_state(state):
+    if not state:
+        return "No state snapshot available."
+    lines = []
+    timestamp = state.get("timestamp", "unknown")
+    units = state.get("units", "cm")
+    lines.append(f"Last updated: {timestamp}")
+    lines.append(
+        f"Bodies: {state.get('body_count', 0)}, "
+        f"Sketches: {state.get('sketch_count', 0)}, "
+        f"Features: {state.get('feature_count', 0)}, "
+        f"Units: {units}"
+    )
+    for body in state.get("bodies", []):
+        name = body.get("name", "Body")
+        size = body.get("size_cm") or [0, 0, 0]
+        center = body.get("center_cm") or [0, 0, 0]
+        faces = body.get("face_count", 0)
+        lines.append(
+            f"- {name}: size {size[0]:.2f}x{size[1]:.2f}x{size[2]:.2f} cm, "
+            f"center {center[0]:.2f},{center[1]:.2f},{center[2]:.2f} cm, "
+            f"faces {faces}"
+        )
+    return "\n".join(lines)
 
 if __name__ == "__main__":
     app.run(debug=True)

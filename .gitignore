@@ -22,6 +22,7 @@ generated_scripts/*.py
 # Logs
 *.log
 auto_runner/log.txt
+auto_runner/state.json
 
 # OS
 .DS_Store
@@ -40,4 +41,3 @@ auto_runner/log.txt
 # Sensitive
 *.key
 secrets/
-

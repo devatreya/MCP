@@ -1,8 +1,10 @@
-import adsk.core, adsk.fusion, traceback, os, time
+import adsk.core, adsk.fusion, traceback, os, time, json
 import threading
 
 running = True
-log_file = "/Users/devatreya/Desktop/Projects/MCP/auto_runner/log.txt"
+AUTO_RUNNER_DIR = os.path.dirname(os.path.abspath(__file__))
+log_file = os.path.join(AUTO_RUNNER_DIR, "log.txt")
+state_file = os.path.join(AUTO_RUNNER_DIR, "state.json")
 
 def log(msg):
     try:
@@ -12,10 +14,67 @@ def log(msg):
     except Exception as e:
         pass  # Silently fail if logging fails
 
+def capture_state_snapshot():
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+    if not design:
+        return
+    root = design.rootComponent
+    units = None
+    try:
+        units = design.unitsManager.defaultLengthUnits
+    except Exception:
+        units = "cm"
+
+    bodies = []
+    for i in range(root.bRepBodies.count):
+        body = root.bRepBodies.item(i)
+        try:
+            bbox = body.boundingBox
+            minp = bbox.minPoint
+            maxp = bbox.maxPoint
+            size = [
+                float(maxp.x - minp.x),
+                float(maxp.y - minp.y),
+                float(maxp.z - minp.z),
+            ]
+            center = [
+                float((maxp.x + minp.x) / 2),
+                float((maxp.y + minp.y) / 2),
+                float((maxp.z + minp.z) / 2),
+            ]
+        except Exception:
+            size = [0.0, 0.0, 0.0]
+            center = [0.0, 0.0, 0.0]
+
+        bodies.append(
+            {
+                "name": body.name,
+                "size_cm": size,
+                "center_cm": center,
+                "face_count": body.faces.count,
+            }
+        )
+
+    state = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "units": units,
+        "body_count": root.bRepBodies.count,
+        "sketch_count": root.sketches.count,
+        "feature_count": root.features.count,
+        "bodies": bodies,
+    }
+
+    try:
+        with open(state_file, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception:
+        pass
+
 def monitor_script_file():
     app = adsk.core.Application.get()
     ui = app.userInterface
-    script_path = "/Users/devatreya/Desktop/Projects/MCP/auto_runner/fusion_auto_run.py"
+    script_path = os.path.join(AUTO_RUNNER_DIR, "fusion_auto_run.py")
     last_mtime = None
 
     log("🟢 Thread started")
@@ -46,6 +105,7 @@ def monitor_script_file():
                         if "run" in injected_scope:
                             injected_scope["run"](None)
                             log("✅ run(context) executed successfully.")
+                            capture_state_snapshot()
                             # Only show message box on errors, not on success
                         else:
                             log("⚠️ No run(context) function found in script.")

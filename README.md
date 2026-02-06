@@ -42,7 +42,7 @@ This project enables you to control Fusion 360 through natural language commands
 
 1. **Install Python dependencies:**
    ```bash
-   pip install flask openai watchdog
+   pip install flask openai watchdog python-dotenv
    ```
 
 2. **Set environment variables:**
@@ -50,6 +50,12 @@ This project enables you to control Fusion 360 through natural language commands
    export OPENAI_API_KEY="your-api-key"
    export OPENAI_ORG_ID="your-org-id"
    export OPENAI_PROJECT_ID="your-project-id"
+   ```
+   Or create a local `.env` file in the project root:
+   ```bash
+   OPENAI_API_KEY="your-api-key"
+   OPENAI_ORG_ID="your-org-id"
+   OPENAI_PROJECT_ID="your-project-id"
    ```
 
 3. **Install Fusion 360 Add-In:**
@@ -120,5 +126,4 @@ This project enables you to control Fusion 360 through natural language commands
 ## License
 
 MIT
-
 
