@@ -257,15 +257,17 @@ def generate_script():
     conversation.append({"role": "user", "content": user_prompt})
     messages = [{"role": "system", "content": system_prompt}] + conversation
 
-    response = client.chat.completions.create(
-        model="gpt-4o",  # Upgraded to GPT-4o for better code generation
-        messages=messages,
-        temperature=0.2,
-        max_tokens=1500  # Increased for more complex operations
-    )
-
-    raw_code = response.choices[0].message.content.strip()
-    cleaned_code = clean_generated_code(raw_code)
+    if should_use_selected_face_hole_template(user_prompt):
+        cleaned_code = build_selected_face_hole_code(user_prompt)
+    else:
+        response = client.chat.completions.create(
+            model="gpt-4o",  # Upgraded to GPT-4o for better code generation
+            messages=messages,
+            temperature=0.2,
+            max_tokens=1500  # Increased for more complex operations
+        )
+        raw_code = response.choices[0].message.content.strip()
+        cleaned_code = clean_generated_code(raw_code)
     clear_model = should_clear_model(user_prompt, model_summary, fusion_state_source)
     wrapped_code = wrap_script_with_run(cleaned_code, clear_model=clear_model)
 
@@ -442,6 +444,105 @@ def requires_selection(user_prompt):
         "current face",
     ]
     return any(k in p for k in keywords)
+
+def should_use_selected_face_hole_template(user_prompt):
+    p = user_prompt.lower()
+    return "hole" in p and "selected" in p and "face" in p
+
+def _extract_hole_radius_cm(user_prompt):
+    p = user_prompt.lower()
+
+    m_size = re.search(r"\bm\s*([0-9]+(?:\.[0-9]+)?)\b", p)
+    if m_size:
+        diameter_mm = float(m_size.group(1))
+        return diameter_mm / 20.0
+
+    diameter_cm = re.search(r"diameter[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*cm", p)
+    if diameter_cm:
+        return float(diameter_cm.group(1)) / 2.0
+
+    diameter_mm = re.search(r"diameter[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*mm", p)
+    if diameter_mm:
+        return float(diameter_mm.group(1)) / 20.0
+
+    radius_cm = re.search(r"radius[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*cm", p)
+    if radius_cm:
+        return float(radius_cm.group(1))
+
+    radius_mm = re.search(r"radius[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*mm", p)
+    if radius_mm:
+        return float(radius_mm.group(1)) / 10.0
+
+    return 0.2  # Default M4-style hole radius.
+
+def _extract_hole_depth_cm(user_prompt):
+    p = user_prompt.lower()
+    if any(token in p for token in ["through", "all the way", "through all", "thru"]):
+        return None
+
+    depth_cm = re.search(r"depth[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*cm", p)
+    if depth_cm:
+        return float(depth_cm.group(1))
+
+    depth_mm = re.search(r"depth[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*mm", p)
+    if depth_mm:
+        return float(depth_mm.group(1)) / 10.0
+
+    return 2.0
+
+def build_selected_face_hole_code(user_prompt):
+    radius_cm = _extract_hole_radius_cm(user_prompt)
+    depth_cm = _extract_hole_depth_cm(user_prompt)
+    through_all = depth_cm is None
+
+    depth_block = (
+        "bodyBox = targetBody.boundingBox\n"
+        "depthCm = max(\n"
+        "    abs(bodyBox.maxPoint.x - bodyBox.minPoint.x),\n"
+        "    abs(bodyBox.maxPoint.y - bodyBox.minPoint.y),\n"
+        "    abs(bodyBox.maxPoint.z - bodyBox.minPoint.z)\n"
+        ") * 2.0\n"
+    ) if through_all else f"depthCm = {depth_cm:.6f}\n"
+
+    template = f"""
+targetFace = adsk.fusion.BRepFace.cast(ui.activeSelections.item(0).entity)
+if not targetFace:
+    raise Exception("Selected entity is not a face.")
+targetBody = targetFace.body
+
+sketch = sketches.add(targetFace)
+faceBoxForHole = targetFace.boundingBox
+holeCenterWorld = adsk.core.Point3D.create(
+    (faceBoxForHole.minPoint.x + faceBoxForHole.maxPoint.x) / 2.0,
+    (faceBoxForHole.minPoint.y + faceBoxForHole.maxPoint.y) / 2.0,
+    (faceBoxForHole.minPoint.z + faceBoxForHole.maxPoint.z) / 2.0
+)
+holeCenter = sketch.modelToSketchSpace(holeCenterWorld)
+sketch.sketchCurves.sketchCircles.addByCenterRadius(holeCenter, {radius_cm:.6f})
+innerProf = sketch.profiles.item(0)
+extrudes = rootComp.features.extrudeFeatures
+{depth_block}distance = adsk.core.ValueInput.createByReal(depthCm)
+
+def try_cut(direction):
+    volBefore = targetBody.volume
+    extInput = extrudes.createInput(innerProf, adsk.fusion.FeatureOperations.CutFeatureOperation)
+    extentDef = adsk.fusion.DistanceExtentDefinition.create(distance)
+    extInput.setOneSideExtent(extentDef, direction)
+    cutFeat = extrudes.add(extInput)
+    volAfter = targetBody.volume
+    if abs(volBefore - volAfter) < 1e-6:
+        try:
+            cutFeat.deleteMe()
+        except:
+            pass
+        return False
+    return True
+
+if not try_cut(adsk.fusion.ExtentDirections.NegativeExtentDirection):
+    if not try_cut(adsk.fusion.ExtentDirections.PositiveExtentDirection):
+        raise Exception("Failed to cut hole into selected face.")
+"""
+    return clean_generated_code(template)
 
 def inject_selected_face_hole_center(raw):
     if "sketch = sketches.add(targetFace)" not in raw:
