@@ -165,6 +165,11 @@ def generate_script():
 
     incoming_fusion_state = payload.get("fusion_state")
     incoming_selection_context = payload.get("selection_context")
+    if requires_selection(user_prompt) and not has_selection(incoming_selection_context):
+        return jsonify({
+            "status": "error",
+            "error": "This prompt requires a selected face/body in Fusion. Select geometry and retry."
+        }), 400
 
     if "conversation" not in session:
         session["conversation"] = []
@@ -201,6 +206,12 @@ def generate_script():
         "8. If there are active selections, prioritize them over heuristic face picking.\n"
         "9. Never recreate the whole model unless the user explicitly asks to reset/start over.\n\n"
         "10. Active selection collection is ui.activeSelections (NOT app.activeSelections).\n\n"
+        "11. When sketching on targetFace, do NOT use Point3D(0,0,0) as hole center.\n"
+        "    Compute face center in world coordinates and convert to sketch space:\n"
+        "    faceBox = targetFace.boundingBox\n"
+        "    holeCenterWorld = adsk.core.Point3D.create((faceBox.minPoint.x + faceBox.maxPoint.x)/2, (faceBox.minPoint.y + faceBox.maxPoint.y)/2, (faceBox.minPoint.z + faceBox.maxPoint.z)/2)\n"
+        "    holeCenter = sketch.modelToSketchSpace(holeCenterWorld)\n"
+        "    Then use addByCenterRadius(holeCenter, radius).\n\n"
         "Fusion model state (authoritative, from add-in):\n"
         + fusion_state + "\n\n"
         "Active selection context:\n"
@@ -286,6 +297,13 @@ def clean_generated_code(raw_code):
     raw = re.sub(
         r"combineFeats\.createInput\(\s*root\.bRepBodies\.item\(0\)\s*,\s*toolBodies\s*\)",
         "combineFeats.createInput(targetFace.body, toolBodies)",
+        raw,
+    )
+    # If selected-face sketch uses origin as center, force face-center in sketch space.
+    raw = inject_selected_face_hole_center(raw)
+    raw = re.sub(
+        r"addByCenterRadius\(\s*adsk\.core\.Point3D\.create\(\s*0\s*,\s*0\s*,\s*0\s*\)\s*,",
+        "addByCenterRadius(holeCenter,",
         raw,
     )
     # Repair deprecated/invalid setOneSideExtent(direction, distance) pattern.
@@ -399,6 +417,46 @@ def should_clear_model(user_prompt, model_summary, fusion_state=None):
         ]
         return any(word in p for word in seed_words)
     return False
+
+def has_selection(selection_context):
+    if not isinstance(selection_context, dict):
+        return False
+    count = selection_context.get("count")
+    if isinstance(count, int):
+        return count > 0
+    items = selection_context.get("items", [])
+    return isinstance(items, list) and len(items) > 0
+
+def requires_selection(user_prompt):
+    p = user_prompt.lower()
+    keywords = [
+        "selected",
+        "selected face",
+        "selected body",
+        "this face",
+        "that face",
+        "current face",
+    ]
+    return any(k in p for k in keywords)
+
+def inject_selected_face_hole_center(raw):
+    if "sketch = sketches.add(targetFace)" not in raw:
+        return raw
+    if "holeCenter = sketch.modelToSketchSpace(" in raw:
+        return raw
+
+    pattern = re.compile(r"^([ \t]*)sketch\s*=\s*sketches\.add\(targetFace\)\s*$", re.MULTILINE)
+
+    def repl(match):
+        indent = match.group(1)
+        return (
+            f"{indent}sketch = sketches.add(targetFace)\n"
+            f"{indent}faceBoxForHole = targetFace.boundingBox\n"
+            f"{indent}holeCenterWorld = adsk.core.Point3D.create((faceBoxForHole.minPoint.x + faceBoxForHole.maxPoint.x)/2, (faceBoxForHole.minPoint.y + faceBoxForHole.maxPoint.y)/2, (faceBoxForHole.minPoint.z + faceBoxForHole.maxPoint.z)/2)\n"
+            f"{indent}holeCenter = sketch.modelToSketchSpace(holeCenterWorld)"
+        )
+
+    return pattern.sub(repl, raw, count=1)
 
 def update_summary(current_summary, user_input):
     summary = current_summary.copy()
