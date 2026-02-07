@@ -447,6 +447,22 @@ def should_use_selected_face_hole_template(user_prompt, selection_context):
     face_cues = ["selected face", "this face", "that face", "current face", "side face"]
     return any(cue in p for cue in face_cues)
 
+def _to_cm(value_text, unit_text):
+    value = float(value_text)
+    return value / 10.0 if unit_text == "mm" else value
+
+def _extract_tagged_measure_cm(text, keywords):
+    keyword_group = "|".join(re.escape(k) for k in keywords)
+    patterns = [
+        rf"\b(?:{keyword_group})\b\s*(?:of\s*)?([0-9]+(?:\.[0-9]+)?)\s*(mm|cm)\b",
+        rf"([0-9]+(?:\.[0-9]+)?)\s*(mm|cm)\s*(?:{keyword_group})\b",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text)
+        if m:
+            return _to_cm(m.group(1), m.group(2))
+    return None
+
 def _extract_hole_radius_cm(user_prompt):
     p = user_prompt.lower()
 
@@ -455,21 +471,13 @@ def _extract_hole_radius_cm(user_prompt):
         diameter_mm = float(m_size.group(1))
         return diameter_mm / 20.0
 
-    diameter_cm = re.search(r"diameter[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*cm", p)
-    if diameter_cm:
-        return float(diameter_cm.group(1)) / 2.0
+    radius_cm = _extract_tagged_measure_cm(p, ["radius"])
+    if radius_cm is not None:
+        return radius_cm
 
-    diameter_mm = re.search(r"diameter[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*mm", p)
-    if diameter_mm:
-        return float(diameter_mm.group(1)) / 20.0
-
-    radius_cm = re.search(r"radius[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*cm", p)
-    if radius_cm:
-        return float(radius_cm.group(1))
-
-    radius_mm = re.search(r"radius[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*mm", p)
-    if radius_mm:
-        return float(radius_mm.group(1)) / 10.0
+    diameter_cm = _extract_tagged_measure_cm(p, ["diameter"])
+    if diameter_cm is not None:
+        return diameter_cm / 2.0
 
     return 0.2  # Default M4-style hole radius.
 
@@ -477,16 +485,13 @@ def _extract_hole_depth_cm(user_prompt):
     p = user_prompt.lower()
     if any(token in p for token in ["through", "all the way", "through all", "thru"]):
         return None
+
+    depth_cm = _extract_tagged_measure_cm(p, ["depth", "deep"])
+    if depth_cm is not None:
+        return depth_cm
+
     if "blind" in p:
         return 2.0
-
-    depth_cm = re.search(r"depth[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*cm", p)
-    if depth_cm:
-        return float(depth_cm.group(1))
-
-    depth_mm = re.search(r"depth[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*mm", p)
-    if depth_mm:
-        return float(depth_mm.group(1)) / 10.0
 
     return None
 
