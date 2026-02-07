@@ -1,48 +1,146 @@
-function getDateString() {
-    const today = new Date();
-    const date = `${today.getDate()}/${today.getMonth() + 1}/${today.getFullYear()}`;
-    const time = `${today.getHours()}:${today.getMinutes()}:${today.getSeconds()}`;
-    return `Date: ${date}, Time: ${time}`;
+const contextBlock = document.getElementById("contextBlock");
+const selectionBlock = document.getElementById("selectionBlock");
+const chat = document.getElementById("chat");
+const promptInput = document.getElementById("prompt");
+const sendBtn = document.getElementById("sendBtn");
+const refreshBtn = document.getElementById("refreshBtn");
+const resetBtn = document.getElementById("resetBtn");
+const statusBadge = document.getElementById("statusBadge");
+
+let busy = false;
+
+function setBusy(nextBusy, label) {
+    busy = nextBusy;
+    sendBtn.disabled = busy;
+    refreshBtn.disabled = busy;
+    resetBtn.disabled = busy;
+    statusBadge.textContent = label || (busy ? "Working" : "Idle");
 }
 
-function sendInfoToFusion() {
-    const args = {
-        arg1: document.getElementById("sampleData").value,
-        arg2: getDateString()
-    };
-
-    // Send the data to Fusion as a JSON string. The return value is a Promise.
-    adsk.fusionSendData("messageFromPalette", JSON.stringify(args)).then((result) =>
-        document.getElementById("returnValue").innerHTML = `${result}`
-    );
-
+function addMessage(role, content) {
+    const item = document.createElement("div");
+    item.className = `msg ${role}`;
+    item.textContent = content;
+    chat.appendChild(item);
+    chat.scrollTop = chat.scrollHeight;
 }
 
-function updateMessage(messageString) {
-    // Message is sent from the add-in as a JSON string.
-    const messageData = JSON.parse(messageString);
-
-    // Update a paragraph with the data passed in.
-    document.getElementById("fusionMessage").innerHTML =
-        `<b>Your text</b>: ${messageData.myText} <br/>` +
-        `<b>Your expression</b>: ${messageData.myExpression} <br/>` +
-        `<b>Your value</b>: ${messageData.myValue}`;
+function updateContextUI(payload) {
+    contextBlock.textContent = payload.state_summary || "No model context available.";
+    selectionBlock.textContent = payload.selection_summary || "No selection context available.";
 }
+
+async function sendToFusion(action, payload = {}) {
+    const raw = await adsk.fusionSendData(action, JSON.stringify(payload));
+    try {
+        return JSON.parse(raw || "{}");
+    } catch (error) {
+        return {
+            ok: false,
+            error: `Invalid Fusion response for ${action}: ${raw}`,
+        };
+    }
+}
+
+async function refreshContext() {
+    if (busy) {
+        return;
+    }
+
+    setBusy(true, "Refreshing");
+    const result = await sendToFusion("requestContext");
+    if (result.ok) {
+        updateContextUI(result);
+        setBusy(false, "Ready");
+    } else {
+        addMessage("error", result.error || "Context refresh failed.");
+        setBusy(false, "Error");
+    }
+}
+
+async function submitPrompt() {
+    if (busy) {
+        return;
+    }
+
+    const prompt = promptInput.value.trim();
+    if (!prompt) {
+        return;
+    }
+
+    addMessage("user", prompt);
+    promptInput.value = "";
+    setBusy(true, "Generating");
+
+    const result = await sendToFusion("submitPrompt", { prompt });
+    if (!result.ok) {
+        const errorMessage = result.error || "Prompt execution failed.";
+        addMessage("error", errorMessage);
+        if (result.traceback) {
+            addMessage("error", result.traceback);
+        }
+        setBusy(false, "Error");
+        return;
+    }
+
+    addMessage("assistant", result.assistant_message || "Edit applied.");
+    updateContextUI(result);
+
+    if (result.script_file) {
+        addMessage("assistant", `Saved script: ${result.script_file}`);
+    }
+
+    setBusy(false, "Ready");
+}
+
+async function resetSession() {
+    if (busy) {
+        return;
+    }
+
+    setBusy(true, "Resetting");
+    const result = await sendToFusion("resetSession");
+    if (!result.ok) {
+        addMessage("error", result.error || "Reset failed.");
+        setBusy(false, "Error");
+        return;
+    }
+
+    chat.innerHTML = "";
+    addMessage("assistant", result.assistant_message || "Reset complete.");
+    updateContextUI(result);
+    setBusy(false, "Ready");
+}
+
+sendBtn.addEventListener("click", submitPrompt);
+refreshBtn.addEventListener("click", refreshContext);
+resetBtn.addEventListener("click", resetSession);
+
+promptInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        submitPrompt();
+    }
+});
 
 window.fusionJavaScriptHandler = {
-    handle: function (action, data) {
+    handle(action, data) {
         try {
-            if (action === "updateMessage") {
-                updateMessage(data);
-            } else if (action === "debugger") {
-                debugger;
-            } else {
-                return `Unexpected command type: ${action}`;
+            if (action === "refreshContext") {
+                const payload = JSON.parse(data || "{}");
+                updateContextUI(payload);
+                return "OK";
             }
-        } catch (e) {
-            console.log(e);
-            console.log(`Exception caught with command: ${action}, data: ${data}`);
+            return `Unhandled action: ${action}`;
+        } catch (error) {
+            return `Handler error: ${error}`;
         }
-        return "OK";
     },
 };
+
+refreshContext();
+setInterval(() => {
+    if (!busy) {
+        refreshContext();
+    }
+}, 5000);

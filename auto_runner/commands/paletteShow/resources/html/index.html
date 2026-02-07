@@ -2,38 +2,253 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Title</title>
-    <script src="static/palette.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP AI Assistant</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <style>
+        :root {
+            --bg-0: #07111b;
+            --bg-1: #0f1c2b;
+            --bg-2: #132538;
+            --text-0: #f4f7fb;
+            --text-1: #adc0d9;
+            --accent: #ff7f3f;
+            --accent-2: #2ec4b6;
+            --danger: #ff4e4e;
+            --border: rgba(173, 192, 217, 0.24);
+            --panel: rgba(17, 31, 47, 0.9);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--text-0);
+            font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+            background:
+                radial-gradient(circle at top right, rgba(255, 127, 63, 0.22), transparent 38%),
+                radial-gradient(circle at bottom left, rgba(46, 196, 182, 0.16), transparent 42%),
+                linear-gradient(160deg, var(--bg-0), var(--bg-1) 58%, var(--bg-2));
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            padding: 16px 16px 12px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(7, 17, 27, 0.5);
+            backdrop-filter: blur(6px);
+        }
+
+        .title-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
+
+        h1 {
+            font-family: "Space Grotesk", "Avenir Next", sans-serif;
+            font-size: 18px;
+            margin: 0;
+            letter-spacing: 0.02em;
+        }
+
+        #statusBadge {
+            font-size: 12px;
+            padding: 5px 8px;
+            border-radius: 999px;
+            background: rgba(46, 196, 182, 0.16);
+            color: #9ff7ed;
+            border: 1px solid rgba(46, 196, 182, 0.5);
+            white-space: nowrap;
+        }
+
+        .subtitle {
+            margin: 8px 0 0;
+            font-size: 12px;
+            color: var(--text-1);
+        }
+
+        main {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-rows: auto auto minmax(160px, 1fr) auto;
+            gap: 12px;
+            padding: 12px;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+
+        .panel h2 {
+            margin: 0;
+            font-size: 12px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #d6e2f1;
+            background: rgba(10, 21, 33, 0.7);
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .panel-body {
+            padding: 12px;
+            font-size: 12px;
+            color: var(--text-1);
+        }
+
+        #contextBlock {
+            max-height: 150px;
+            overflow: auto;
+            white-space: pre-wrap;
+            line-height: 1.45;
+        }
+
+        #selectionBlock {
+            max-height: 130px;
+            overflow: auto;
+            white-space: pre-wrap;
+            line-height: 1.45;
+        }
+
+        #chat {
+            min-height: 160px;
+            max-height: 100%;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 12px;
+        }
+
+        .msg {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px;
+            font-size: 12px;
+            line-height: 1.45;
+            white-space: pre-wrap;
+        }
+
+        .msg.user {
+            border-color: rgba(255, 127, 63, 0.6);
+            background: rgba(255, 127, 63, 0.1);
+            color: #ffd9c5;
+        }
+
+        .msg.assistant {
+            border-color: rgba(46, 196, 182, 0.55);
+            background: rgba(46, 196, 182, 0.1);
+            color: #d5fffa;
+        }
+
+        .msg.error {
+            border-color: rgba(255, 78, 78, 0.7);
+            background: rgba(255, 78, 78, 0.12);
+            color: #ffd5d5;
+        }
+
+        .composer {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
+        }
+
+        #prompt {
+            grid-column: 1 / -1;
+            width: 100%;
+            min-height: 96px;
+            resize: vertical;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: rgba(6, 13, 20, 0.75);
+            color: var(--text-0);
+            padding: 10px;
+            font: inherit;
+            line-height: 1.4;
+        }
+
+        button {
+            border: 1px solid transparent;
+            border-radius: 10px;
+            cursor: pointer;
+            font: inherit;
+            font-size: 12px;
+            padding: 10px 12px;
+            transition: transform 0.08s ease, filter 0.2s ease;
+        }
+
+        button:active {
+            transform: translateY(1px);
+        }
+
+        button.primary {
+            background: linear-gradient(120deg, #ff7f3f, #ff9f68);
+            color: #101e2d;
+            font-weight: 600;
+        }
+
+        button.secondary {
+            background: rgba(173, 192, 217, 0.12);
+            border-color: var(--border);
+            color: var(--text-0);
+        }
+
+        button.danger {
+            background: rgba(255, 78, 78, 0.12);
+            border-color: rgba(255, 78, 78, 0.45);
+            color: #ffd5d5;
+        }
+
+        button[disabled] {
+            opacity: 0.6;
+            cursor: not-allowed;
+            filter: grayscale(0.25);
+        }
+    </style>
+    <script defer src="static/palette.js"></script>
 </head>
 <body>
-<div>
-
-    <h1>Fusion Palette Sample</h1>
-    <div>
-        <a href="https://help.autodesk.com/view/fusion360/ENU/?guid=GUID-6C0C8148-98D0-4DBC-A4EC-D8E03A8A3B5B">
-            Learn more about working with Palettes in Fusion
-        </a>
+<header>
+    <div class="title-row">
+        <h1>MCP AI Assistant</h1>
+        <span id="statusBadge">Idle</span>
     </div>
-    <br><hr>
+    <p class="subtitle">Fusion panel with model state and live selection context.</p>
+</header>
+<main>
+    <section class="panel">
+        <h2>Model Context</h2>
+        <div class="panel-body" id="contextBlock">Loading model context...</div>
+    </section>
 
-    <h3>Send Data to HTML Event Handler</h3>
-    <div style='margin-left: 30px;'>
-        <label for="sampleData"><b>Data to send:</b></label>
-        <input type="text" id="sampleData" value="Enter Some Text"><br/><br/>
-        <button type='button' onclick='sendInfoToFusion()' style='background-color: #cccccc; padding: 5px'>
-            <b>Send HTML Event</b>
-        </button>
-    </div>
+    <section class="panel">
+        <h2>Selection Context</h2>
+        <div class="panel-body" id="selectionBlock">Loading selection context...</div>
+    </section>
 
-    <h3>HTML Event Response Value:</h3>
-    <div id='returnValue' style='margin-left: 30px;'>Response</div>
+    <section class="panel" id="chat"></section>
 
-    <h3>Message from "Send to Palette" Command</h3>
-    <div style='margin-left: 30px;'>
-        <p id='fusionMessage'>Message from Fusion</p>
-        <br/><br/>
-    </div>
-
-</div>
+    <section class="composer">
+        <textarea id="prompt" placeholder="Example: Add a 5 mm hole through the selected top face."></textarea>
+        <button id="sendBtn" class="primary">Apply Edit</button>
+        <button id="refreshBtn" class="secondary">Refresh Context</button>
+        <button id="resetBtn" class="danger">Reset Session + Design</button>
+    </section>
+</main>
 </body>
 </html>

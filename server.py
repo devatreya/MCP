@@ -106,11 +106,17 @@ def run(context):
     with open(filename, "w") as f:
         f.write(cleanup_script)
     
-    return jsonify({"status": "reset"})
+    return jsonify({"status": "reset", "script": cleanup_script, "file": filename})
 
 @app.route("/generate", methods=["POST"])
 def generate_script():
-    user_prompt = request.json["prompt"]
+    payload = request.get_json(silent=True) or {}
+    user_prompt = (payload.get("prompt") or "").strip()
+    if not user_prompt:
+        return jsonify({"status": "error", "error": "Missing prompt"}), 400
+
+    incoming_fusion_state = payload.get("fusion_state")
+    incoming_selection_context = payload.get("selection_context")
 
     if "conversation" not in session:
         session["conversation"] = []
@@ -122,7 +128,9 @@ def generate_script():
 
     model_summary_text = "\n".join(f"- {item}" for item in model_summary)
 
-    fusion_state = summarize_fusion_state(load_fusion_state())
+    fusion_state_source = incoming_fusion_state if isinstance(incoming_fusion_state, dict) else load_fusion_state()
+    fusion_state = summarize_fusion_state(fusion_state_source)
+    selection_state = summarize_selection_context(incoming_selection_context)
     system_prompt = (
         "You are a Python assistant for Fusion 360. "
         "Generate ONLY the body of Python code (no imports, no def run, no setup - those are added automatically). "
@@ -145,8 +153,12 @@ def generate_script():
         "   c) Use combineFeatures with CutFeatureOperation to subtract it\n"
         "   d) Set isKeepToolBodies = False to remove the cutting body\n"
         "7. Center sketches at origin (0,0,0) for simplicity\n\n"
+        "8. If there are active selections, prioritize them over heuristic face picking.\n"
+        "9. Never recreate the whole model unless the user explicitly asks to reset/start over.\n\n"
         "Fusion model state (authoritative, from add-in):\n"
         + fusion_state + "\n\n"
+        "Active selection context:\n"
+        + selection_state + "\n\n"
         "EXAMPLE - Cube centered at origin:\n"
         "xyPlane = rootComp.xYConstructionPlane\n"
         "sketch = sketches.add(xyPlane)\n"
@@ -196,7 +208,7 @@ def generate_script():
 
     raw_code = response.choices[0].message.content.strip()
     cleaned_code = clean_generated_code(raw_code)
-    clear_model = should_clear_model(user_prompt, model_summary)
+    clear_model = should_clear_model(user_prompt, model_summary, fusion_state_source)
     wrapped_code = wrap_script_with_run(cleaned_code, clear_model=clear_model)
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -288,7 +300,7 @@ sketches = rootComp.sketches
         "            ui.messageBox('❌ Runtime Error: {}'.format(str(e)))\n"
     )
 
-def should_clear_model(user_prompt, model_summary):
+def should_clear_model(user_prompt, model_summary, fusion_state=None):
     p = user_prompt.lower()
     explicit_reset = [
         "reset",
@@ -301,7 +313,11 @@ def should_clear_model(user_prompt, model_summary):
     ]
     if any(phrase in p for phrase in explicit_reset):
         return True
-    if not model_summary:
+    has_geometry = False
+    if isinstance(fusion_state, dict):
+        has_geometry = fusion_state.get("body_count", 0) > 0
+
+    if not model_summary and not has_geometry:
         seed_words = [
             "create",
             "make",
@@ -366,14 +382,69 @@ def summarize_fusion_state(state):
     )
     for body in state.get("bodies", []):
         name = body.get("name", "Body")
-        size = body.get("size_cm") or [0, 0, 0]
-        center = body.get("center_cm") or [0, 0, 0]
+        bbox = body.get("bbox") or {}
+        size_dict = bbox.get("size") or {}
+        center_dict = bbox.get("center") or {}
+        size = body.get("size_cm") or [
+            size_dict.get("x", 0),
+            size_dict.get("y", 0),
+            size_dict.get("z", 0),
+        ]
+        center = body.get("center_cm") or [
+            center_dict.get("x", 0),
+            center_dict.get("y", 0),
+            center_dict.get("z", 0),
+        ]
         faces = body.get("face_count", 0)
         lines.append(
             f"- {name}: size {size[0]:.2f}x{size[1]:.2f}x{size[2]:.2f} cm, "
             f"center {center[0]:.2f},{center[1]:.2f},{center[2]:.2f} cm, "
             f"faces {faces}"
         )
+    return "\n".join(lines)
+
+def summarize_selection_context(selection):
+    if not selection:
+        return "No active selections."
+
+    if isinstance(selection, list):
+        items = selection
+        count = len(items)
+    else:
+        items = selection.get("items", []) if isinstance(selection, dict) else []
+        count = selection.get("count", len(items)) if isinstance(selection, dict) else len(items)
+
+    if count == 0:
+        return "No active selections."
+
+    lines = [f"Active selections: {count}"]
+    for item in items[:8]:
+        kind = item.get("kind", item.get("object_type", "unknown"))
+        index = item.get("index", 0)
+        if kind == "face":
+            normal = item.get("normal") or [0, 0, 0]
+            body_name = item.get("body_name", "body")
+            area = item.get("area_cm2", 0)
+            lines.append(
+                f"- [{index}] face on {body_name}, normal {normal[0]:.3f},{normal[1]:.3f},{normal[2]:.3f}, area {area:.2f} cm^2"
+            )
+        elif kind == "body":
+            lines.append(
+                f"- [{index}] body {item.get('name', 'Body')}, volume {item.get('volume_cm3', 0):.2f} cm^3"
+            )
+        elif kind == "edge":
+            lines.append(f"- [{index}] edge length {item.get('length_cm', 0):.2f} cm")
+        elif kind == "vertex":
+            point = item.get("point") or {}
+            lines.append(
+                f"- [{index}] vertex at {point.get('x', 0):.2f},{point.get('y', 0):.2f},{point.get('z', 0):.2f}"
+            )
+        else:
+            lines.append(f"- [{index}] {kind}")
+
+    if count > 8:
+        lines.append(f"... {count - 8} more selections")
+
     return "\n".join(lines)
 
 if __name__ == "__main__":
