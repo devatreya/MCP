@@ -34,7 +34,7 @@ def run(context):
             log("ERROR: No top face found")
             ui.messageBox("No top face!")
             return
-            
+        
         log("Top face found, creating sketch...")
         sketch = sketches.add(topFace)
         sketch.sketchCurves.sketchCircles.addByCenterRadius(adsk.core.Point3D.create(0, 0, 0), 2.5)
@@ -94,7 +94,7 @@ def run(context):
         log(f"Final bodies: {rootComp.bRepBodies.count}")
         log("===== COMPLETE =====")
         ui.messageBox("✅ Check log for details")
-        
+            
     except Exception as e:
         log(f"EXCEPTION: {str(e)}")
         log(traceback.format_exc())
