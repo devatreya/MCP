@@ -362,6 +362,7 @@ sketches = rootComp.sketches
         "    except Exception as e:\n"
         "        if ui:\n"
         "            ui.messageBox('❌ Runtime Error: {}'.format(str(e)))\n"
+        "        raise\n"
     )
 
 def should_clear_model(user_prompt, model_summary, fusion_state=None):
@@ -497,6 +498,8 @@ def build_selected_face_hole_code(user_prompt):
     depth_expr = "bodyMaxDim * 2.0" if through_all else f"{depth_cm:.6f}"
 
     template = f"""
+if ui.activeSelections.count < 1:
+    raise Exception("No active selection. Select a target face and retry.")
 targetFace = adsk.fusion.BRepFace.cast(ui.activeSelections.item(0).entity)
 if not targetFace:
     raise Exception("Selected entity is not a face.")
@@ -511,7 +514,26 @@ holeCenterWorld = adsk.core.Point3D.create(
 )
 holeCenter = sketch.modelToSketchSpace(holeCenterWorld)
 sketch.sketchCurves.sketchCircles.addByCenterRadius(holeCenter, {radius_cm:.6f})
-innerProf = sketch.profiles.item(0)
+expectedProfileArea = 3.141592653589793 * ({radius_cm:.6f} ** 2)
+innerProf = None
+bestProfileArea = 0.0
+bestProfileScore = 1e99
+for i in range(sketch.profiles.count):
+    candidate = sketch.profiles.item(i)
+    try:
+        props = candidate.areaProperties(adsk.fusion.CalculationAccuracy.MediumCalculationAccuracy)
+        candidateArea = abs(props.area)
+    except:
+        continue
+    profileScore = abs(candidateArea - expectedProfileArea)
+    if profileScore < bestProfileScore:
+        bestProfileScore = profileScore
+        bestProfileArea = candidateArea
+        innerProf = candidate
+if not innerProf:
+    raise Exception("Failed to resolve hole profile from sketch.")
+if expectedProfileArea > 0 and abs(bestProfileArea - expectedProfileArea) > (expectedProfileArea * 0.5):
+    raise Exception("Resolved profile area does not match requested hole size.")
 extrudes = rootComp.features.extrudeFeatures
 bodyBox = targetBody.boundingBox
 bodyMaxDim = max(
@@ -521,7 +543,9 @@ bodyMaxDim = max(
 )
 depthCm = {depth_expr}
 distance = adsk.core.ValueInput.createByReal(depthCm)
-minExpectedDelta = 1e-6
+expectedHoleVolume = 3.141592653589793 * ({radius_cm:.6f} ** 2) * max(0.01, depthCm)
+minExpectedDelta = max(1e-6, expectedHoleVolume * 0.02)
+maxReasonableDelta = max(1e-5, expectedHoleVolume * 25.0)
 
 def try_cut(direction):
     volBefore = targetBody.volume
@@ -531,6 +555,12 @@ def try_cut(direction):
     cutFeat = extrudes.add(extInput)
     volAfter = targetBody.volume
     delta = volBefore - volAfter
+    if delta > maxReasonableDelta:
+        try:
+            cutFeat.deleteMe()
+        except:
+            pass
+        return False
     if delta < minExpectedDelta:
         try:
             cutFeat.deleteMe()
