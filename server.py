@@ -205,7 +205,7 @@ def generate_script():
         "      - Compare targetBody.volume before/after\n"
         "      - If unchanged, delete feature and retry PositiveExtentDirection\n"
         "   c) If using combine fallback, target body must be targetFace.body (NOT rootComp.bRepBodies.item(0))\n"
-        "7. Center sketches at origin (0,0,0) for simplicity\n\n"
+        "7. Center sketches at origin only when no selected face/location is provided.\n\n"
         "8. If there are active selections, prioritize them over heuristic face picking.\n"
         "9. Never recreate the whole model unless the user explicitly asks to reset/start over.\n\n"
         "10. Active selection collection is ui.activeSelections (NOT app.activeSelections).\n\n"
@@ -230,34 +230,13 @@ def generate_script():
         "distance = adsk.core.ValueInput.createByReal(10)\n"
         "extInput.setDistanceExtent(False, distance)\n"
         "extrudes.add(extInput)\n\n"
-        "EXAMPLE - Hole on selected face (diameter 5cm, depth 2cm) using direct cut:\n"
-        "targetFace = adsk.fusion.BRepFace.cast(ui.activeSelections.item(0).entity)\n"
-        "targetBody = targetFace.body\n"
-        "sketch = sketches.add(targetFace)\n"
-        "sketch.sketchCurves.sketchCircles.addByCenterRadius(adsk.core.Point3D.create(0, 0, 0), 2.5)\n"
-        "innerProf = sketch.profiles.item(0)\n"
-        "extrudes = rootComp.features.extrudeFeatures\n"
-        "extInput = extrudes.createInput(innerProf, adsk.fusion.FeatureOperations.CutFeatureOperation)\n"
-        "distance = adsk.core.ValueInput.createByReal(2)\n"
-        "bodyBox = targetBody.boundingBox\n"
-        "faceBox = targetFace.boundingBox\n"
-        "bodyCenter = adsk.core.Point3D.create((bodyBox.minPoint.x + bodyBox.maxPoint.x)/2, (bodyBox.minPoint.y + bodyBox.maxPoint.y)/2, (bodyBox.minPoint.z + bodyBox.maxPoint.z)/2)\n"
-        "faceCenter = adsk.core.Point3D.create((faceBox.minPoint.x + faceBox.maxPoint.x)/2, (faceBox.minPoint.y + faceBox.maxPoint.y)/2, (faceBox.minPoint.z + faceBox.maxPoint.z)/2)\n"
-        "plane = adsk.core.Plane.cast(targetFace.geometry)\n"
-        "direction = adsk.fusion.ExtentDirections.NegativeExtentDirection\n"
-        "if plane:\n"
-        "    toBody = adsk.core.Vector3D.create(bodyCenter.x - faceCenter.x, bodyCenter.y - faceCenter.y, bodyCenter.z - faceCenter.z)\n"
-        "    direction = adsk.fusion.ExtentDirections.PositiveExtentDirection if plane.normal.dotProduct(toBody) > 0 else adsk.fusion.ExtentDirections.NegativeExtentDirection\n"
-        "extentDef = adsk.fusion.DistanceExtentDefinition.create(distance)\n"
-        "extInput.setOneSideExtent(extentDef, direction)\n"
-        "extrudes.add(extInput)\n\n"
         "Current model state (from prompts):\n" + model_summary_text
     )
 
     conversation.append({"role": "user", "content": user_prompt})
     messages = [{"role": "system", "content": system_prompt}] + conversation
 
-    if should_use_selected_face_hole_template(user_prompt):
+    if should_use_selected_face_hole_template(user_prompt, incoming_selection_context):
         cleaned_code = build_selected_face_hole_code(user_prompt)
     else:
         response = client.chat.completions.create(
@@ -304,14 +283,6 @@ def clean_generated_code(raw_code):
         "combineFeats.createInput(targetFace.body, toolBodies)",
         raw,
     )
-    # If selected-face sketch uses origin as center, force face-center in sketch space.
-    raw = inject_selected_face_hole_center(raw)
-    raw = re.sub(
-        r"addByCenterRadius\(\s*adsk\.core\.Point3D\.create\(\s*0\s*,\s*0\s*,\s*0\s*\)\s*,",
-        "addByCenterRadius(holeCenter,",
-        raw,
-    )
-    raw = stabilize_selected_face_cut_direction(raw)
     # Repair deprecated/invalid setOneSideExtent(direction, distance) pattern.
     raw = re.sub(
         r"(\w+)\.setOneSideExtent\(\s*(adsk\.fusion\.ExtentDirections\.[A-Za-z]+)\s*,\s*([^)]+)\)",
@@ -445,9 +416,35 @@ def requires_selection(user_prompt):
     ]
     return any(k in p for k in keywords)
 
-def should_use_selected_face_hole_template(user_prompt):
+def has_selected_face(selection_context):
+    if not isinstance(selection_context, dict):
+        return False
+    items = selection_context.get("items", [])
+    if not isinstance(items, list):
+        return False
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        kind = (item.get("kind") or item.get("object_type") or "").strip().lower()
+        if kind == "face":
+            return True
+    return False
+
+def should_use_selected_face_hole_template(user_prompt, selection_context):
     p = user_prompt.lower()
-    return "hole" in p and "selected" in p and "face" in p
+    hole_intent = any(token in p for token in ["hole", "drill", "bore"])
+    remove_intent = bool(
+        re.search(r"\b(remove|delete|fill|patch|close)\b.*\b(hole|drill|bore)\b", p)
+        or re.search(r"\b(hole|drill|bore)\b.*\b(remove|delete|fill|patch|close)\b", p)
+    )
+    if not hole_intent or remove_intent:
+        return False
+    if not has_selection(selection_context):
+        return False
+    if has_selected_face(selection_context):
+        return True
+    face_cues = ["selected face", "this face", "that face", "current face", "side face"]
+    return any(cue in p for cue in face_cues)
 
 def _extract_hole_radius_cm(user_prompt):
     p = user_prompt.lower()
@@ -479,6 +476,8 @@ def _extract_hole_depth_cm(user_prompt):
     p = user_prompt.lower()
     if any(token in p for token in ["through", "all the way", "through all", "thru"]):
         return None
+    if "blind" in p:
+        return 2.0
 
     depth_cm = re.search(r"depth[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*cm", p)
     if depth_cm:
@@ -488,7 +487,7 @@ def _extract_hole_depth_cm(user_prompt):
     if depth_mm:
         return float(depth_mm.group(1)) / 10.0
 
-    return 2.0
+    return None
 
 def build_selected_face_hole_code(user_prompt):
     radius_cm = _extract_hole_radius_cm(user_prompt)
@@ -522,10 +521,7 @@ bodyMaxDim = max(
 )
 depthCm = {depth_expr}
 distance = adsk.core.ValueInput.createByReal(depthCm)
-minExpectedDelta = max(
-    1e-5,
-    3.141592653589793 * ({radius_cm:.6f} ** 2) * max(0.05, min(depthCm, bodyMaxDim)) * 0.05
-)
+minExpectedDelta = 1e-6
 
 def try_cut(direction):
     volBefore = targetBody.volume
@@ -549,68 +545,6 @@ if not try_cut(adsk.fusion.ExtentDirections.NegativeExtentDirection):
 """
     return clean_generated_code(template)
 
-def inject_selected_face_hole_center(raw):
-    if "sketch = sketches.add(targetFace)" not in raw:
-        return raw
-    if "holeCenter = sketch.modelToSketchSpace(" in raw:
-        return raw
-
-    pattern = re.compile(r"^([ \t]*)sketch\s*=\s*sketches\.add\(targetFace\)\s*$", re.MULTILINE)
-
-    def repl(match):
-        indent = match.group(1)
-        return (
-            f"{indent}sketch = sketches.add(targetFace)\n"
-            f"{indent}faceBoxForHole = targetFace.boundingBox\n"
-            f"{indent}holeCenterWorld = adsk.core.Point3D.create((faceBoxForHole.minPoint.x + faceBoxForHole.maxPoint.x)/2, (faceBoxForHole.minPoint.y + faceBoxForHole.maxPoint.y)/2, (faceBoxForHole.minPoint.z + faceBoxForHole.maxPoint.z)/2)\n"
-            f"{indent}holeCenter = sketch.modelToSketchSpace(holeCenterWorld)"
-        )
-
-    return pattern.sub(repl, raw, count=1)
-
-def stabilize_selected_face_cut_direction(raw):
-    if "targetFace = adsk.fusion.BRepFace.cast(ui.activeSelections.item(0).entity)" not in raw:
-        return raw
-    if "FeatureOperations.CutFeatureOperation" not in raw:
-        return raw
-    if "volBefore = targetBody.volume" in raw:
-        return raw
-
-    # Ensure targetBody exists for selected-face edits.
-    raw = re.sub(
-        r"targetFace\s*=\s*adsk\.fusion\.BRepFace\.cast\(ui\.activeSelections\.item\(0\)\.entity\)",
-        "targetFace = adsk.fusion.BRepFace.cast(ui.activeSelections.item(0).entity)\n"
-        "targetBody = targetFace.body",
-        raw,
-        count=1,
-    )
-
-    pattern = re.compile(
-        r"^([ \t]*)extInput\.setOneSideExtent\([^\n]*\)\s*\n([ \t]*)extrudes\.add\(extInput\)\s*$",
-        re.MULTILINE,
-    )
-
-    def repl(match):
-        indent = match.group(1)
-        return (
-            f"{indent}volBefore = targetBody.volume\n"
-            f"{indent}extentDef = adsk.fusion.DistanceExtentDefinition.create(distance)\n"
-            f"{indent}extInput.setOneSideExtent(extentDef, adsk.fusion.ExtentDirections.NegativeExtentDirection)\n"
-            f"{indent}cutFeat = extrudes.add(extInput)\n"
-            f"{indent}volAfter = targetBody.volume\n"
-            f"{indent}if abs(volBefore - volAfter) < 1e-6:\n"
-            f"{indent}    try:\n"
-            f"{indent}        cutFeat.deleteMe()\n"
-            f"{indent}    except:\n"
-            f"{indent}        pass\n"
-            f"{indent}    extInput = extrudes.createInput(innerProf, adsk.fusion.FeatureOperations.CutFeatureOperation)\n"
-            f"{indent}    extentDef = adsk.fusion.DistanceExtentDefinition.create(distance)\n"
-            f"{indent}    extInput.setOneSideExtent(extentDef, adsk.fusion.ExtentDirections.PositiveExtentDirection)\n"
-            f"{indent}    extrudes.add(extInput)"
-        )
-
-    return pattern.sub(repl, raw, count=1)
-
 def update_summary(current_summary, user_input):
     summary = current_summary.copy()
     user_input_lower = user_input.lower()
@@ -631,7 +565,10 @@ def update_summary(current_summary, user_input):
             hole_desc += f" diameter {diameter_match[0]}cm"
         if depth_match:
             hole_desc += f" depth {depth_match[0]}cm"
-        summary.append(hole_desc + " on top face")
+        if any(token in user_input_lower for token in ["selected face", "this face", "that face", "current face", "side face"]):
+            summary.append(hole_desc + " on selected face")
+        else:
+            summary.append(hole_desc)
     elif "remove" in user_input_lower and "hole" in user_input_lower:
         summary = [s for s in summary if "hole" not in s.lower()]
     elif "taller" in user_input_lower or "shorter" in user_input_lower:
