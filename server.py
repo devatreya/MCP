@@ -495,14 +495,7 @@ def build_selected_face_hole_code(user_prompt):
     depth_cm = _extract_hole_depth_cm(user_prompt)
     through_all = depth_cm is None
 
-    depth_block = (
-        "bodyBox = targetBody.boundingBox\n"
-        "depthCm = max(\n"
-        "    abs(bodyBox.maxPoint.x - bodyBox.minPoint.x),\n"
-        "    abs(bodyBox.maxPoint.y - bodyBox.minPoint.y),\n"
-        "    abs(bodyBox.maxPoint.z - bodyBox.minPoint.z)\n"
-        ") * 2.0\n"
-    ) if through_all else f"depthCm = {depth_cm:.6f}\n"
+    depth_expr = "bodyMaxDim * 2.0" if through_all else f"{depth_cm:.6f}"
 
     template = f"""
 targetFace = adsk.fusion.BRepFace.cast(ui.activeSelections.item(0).entity)
@@ -521,7 +514,18 @@ holeCenter = sketch.modelToSketchSpace(holeCenterWorld)
 sketch.sketchCurves.sketchCircles.addByCenterRadius(holeCenter, {radius_cm:.6f})
 innerProf = sketch.profiles.item(0)
 extrudes = rootComp.features.extrudeFeatures
-{depth_block}distance = adsk.core.ValueInput.createByReal(depthCm)
+bodyBox = targetBody.boundingBox
+bodyMaxDim = max(
+    abs(bodyBox.maxPoint.x - bodyBox.minPoint.x),
+    abs(bodyBox.maxPoint.y - bodyBox.minPoint.y),
+    abs(bodyBox.maxPoint.z - bodyBox.minPoint.z)
+)
+depthCm = {depth_expr}
+distance = adsk.core.ValueInput.createByReal(depthCm)
+minExpectedDelta = max(
+    1e-5,
+    3.141592653589793 * ({radius_cm:.6f} ** 2) * max(0.05, min(depthCm, bodyMaxDim)) * 0.05
+)
 
 def try_cut(direction):
     volBefore = targetBody.volume
@@ -530,7 +534,8 @@ def try_cut(direction):
     extInput.setOneSideExtent(extentDef, direction)
     cutFeat = extrudes.add(extInput)
     volAfter = targetBody.volume
-    if abs(volBefore - volAfter) < 1e-6:
+    delta = volBefore - volAfter
+    if delta < minExpectedDelta:
         try:
             cutFeat.deleteMe()
         except:
