@@ -200,7 +200,10 @@ def generate_script():
         "           break\n"
         "6. For HOLES/CUTS use Boolean subtraction with Combine feature:\n"
         "   a) Prefer direct cut extrude: createInput(profile, CutFeatureOperation)\n"
-        "   b) Determine inward direction from selected face normal and body center\n"
+        "   b) For selected-face cuts, direction must be robust:\n"
+        "      - Try NegativeExtentDirection first\n"
+        "      - Compare targetBody.volume before/after\n"
+        "      - If unchanged, delete feature and retry PositiveExtentDirection\n"
         "   c) If using combine fallback, target body must be targetFace.body (NOT rootComp.bRepBodies.item(0))\n"
         "7. Center sketches at origin (0,0,0) for simplicity\n\n"
         "8. If there are active selections, prioritize them over heuristic face picking.\n"
@@ -306,6 +309,7 @@ def clean_generated_code(raw_code):
         "addByCenterRadius(holeCenter,",
         raw,
     )
+    raw = stabilize_selected_face_cut_direction(raw)
     # Repair deprecated/invalid setOneSideExtent(direction, distance) pattern.
     raw = re.sub(
         r"(\w+)\.setOneSideExtent\(\s*(adsk\.fusion\.ExtentDirections\.[A-Za-z]+)\s*,\s*([^)]+)\)",
@@ -454,6 +458,49 @@ def inject_selected_face_hole_center(raw):
             f"{indent}faceBoxForHole = targetFace.boundingBox\n"
             f"{indent}holeCenterWorld = adsk.core.Point3D.create((faceBoxForHole.minPoint.x + faceBoxForHole.maxPoint.x)/2, (faceBoxForHole.minPoint.y + faceBoxForHole.maxPoint.y)/2, (faceBoxForHole.minPoint.z + faceBoxForHole.maxPoint.z)/2)\n"
             f"{indent}holeCenter = sketch.modelToSketchSpace(holeCenterWorld)"
+        )
+
+    return pattern.sub(repl, raw, count=1)
+
+def stabilize_selected_face_cut_direction(raw):
+    if "targetFace = adsk.fusion.BRepFace.cast(ui.activeSelections.item(0).entity)" not in raw:
+        return raw
+    if "FeatureOperations.CutFeatureOperation" not in raw:
+        return raw
+    if "volBefore = targetBody.volume" in raw:
+        return raw
+
+    # Ensure targetBody exists for selected-face edits.
+    raw = re.sub(
+        r"targetFace\s*=\s*adsk\.fusion\.BRepFace\.cast\(ui\.activeSelections\.item\(0\)\.entity\)",
+        "targetFace = adsk.fusion.BRepFace.cast(ui.activeSelections.item(0).entity)\n"
+        "targetBody = targetFace.body",
+        raw,
+        count=1,
+    )
+
+    pattern = re.compile(
+        r"^([ \t]*)extInput\.setOneSideExtent\([^\n]*\)\s*\n([ \t]*)extrudes\.add\(extInput\)\s*$",
+        re.MULTILINE,
+    )
+
+    def repl(match):
+        indent = match.group(1)
+        return (
+            f"{indent}volBefore = targetBody.volume\n"
+            f"{indent}extentDef = adsk.fusion.DistanceExtentDefinition.create(distance)\n"
+            f"{indent}extInput.setOneSideExtent(extentDef, adsk.fusion.ExtentDirections.NegativeExtentDirection)\n"
+            f"{indent}cutFeat = extrudes.add(extInput)\n"
+            f"{indent}volAfter = targetBody.volume\n"
+            f"{indent}if abs(volBefore - volAfter) < 1e-6:\n"
+            f"{indent}    try:\n"
+            f"{indent}        cutFeat.deleteMe()\n"
+            f"{indent}    except:\n"
+            f"{indent}        pass\n"
+            f"{indent}    extInput = extrudes.createInput(innerProf, adsk.fusion.FeatureOperations.CutFeatureOperation)\n"
+            f"{indent}    extentDef = adsk.fusion.DistanceExtentDefinition.create(distance)\n"
+            f"{indent}    extInput.setOneSideExtent(extentDef, adsk.fusion.ExtentDirections.PositiveExtentDirection)\n"
+            f"{indent}    extrudes.add(extInput)"
         )
 
     return pattern.sub(repl, raw, count=1)
