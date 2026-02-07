@@ -31,7 +31,23 @@ function updateContextUI(payload) {
 }
 
 async function sendToFusion(action, payload = {}) {
-    const raw = await adsk.fusionSendData(action, JSON.stringify(payload));
+    if (!window.adsk || typeof adsk.fusionSendData !== "function") {
+        return {
+            ok: false,
+            error: "Fusion bridge is not ready in this panel.",
+        };
+    }
+
+    let raw;
+    try {
+        raw = await adsk.fusionSendData(action, JSON.stringify(payload));
+    } catch (error) {
+        return {
+            ok: false,
+            error: `Fusion bridge call failed for ${action}: ${error}`,
+        };
+    }
+
     try {
         return JSON.parse(raw || "{}");
     } catch (error) {
@@ -48,12 +64,17 @@ async function refreshContext() {
     }
 
     setBusy(true, "Refreshing");
-    const result = await sendToFusion("requestContext");
-    if (result.ok) {
-        updateContextUI(result);
-        setBusy(false, "Ready");
-    } else {
-        addMessage("error", result.error || "Context refresh failed.");
+    try {
+        const result = await sendToFusion("requestContext");
+        if (result.ok) {
+            updateContextUI(result);
+            setBusy(false, "Ready");
+        } else {
+            addMessage("error", result.error || "Context refresh failed.");
+            setBusy(false, "Error");
+        }
+    } catch (error) {
+        addMessage("error", `Context refresh crashed: ${error}`);
         setBusy(false, "Error");
     }
 }
@@ -72,25 +93,30 @@ async function submitPrompt() {
     promptInput.value = "";
     setBusy(true, "Generating");
 
-    const result = await sendToFusion("submitPrompt", { prompt });
-    if (!result.ok) {
-        const errorMessage = result.error || "Prompt execution failed.";
-        addMessage("error", errorMessage);
-        if (result.traceback) {
-            addMessage("error", result.traceback);
+    try {
+        const result = await sendToFusion("submitPrompt", { prompt });
+        if (!result.ok) {
+            const errorMessage = result.error || "Prompt execution failed.";
+            addMessage("error", errorMessage);
+            if (result.traceback) {
+                addMessage("error", result.traceback);
+            }
+            setBusy(false, "Error");
+            return;
         }
+
+        addMessage("assistant", result.assistant_message || "Edit applied.");
+        updateContextUI(result);
+
+        if (result.script_file) {
+            addMessage("assistant", `Saved script: ${result.script_file}`);
+        }
+
+        setBusy(false, "Ready");
+    } catch (error) {
+        addMessage("error", `Prompt request crashed: ${error}`);
         setBusy(false, "Error");
-        return;
     }
-
-    addMessage("assistant", result.assistant_message || "Edit applied.");
-    updateContextUI(result);
-
-    if (result.script_file) {
-        addMessage("assistant", `Saved script: ${result.script_file}`);
-    }
-
-    setBusy(false, "Ready");
 }
 
 async function resetSession() {
@@ -99,17 +125,22 @@ async function resetSession() {
     }
 
     setBusy(true, "Resetting");
-    const result = await sendToFusion("resetSession");
-    if (!result.ok) {
-        addMessage("error", result.error || "Reset failed.");
-        setBusy(false, "Error");
-        return;
-    }
+    try {
+        const result = await sendToFusion("resetSession");
+        if (!result.ok) {
+            addMessage("error", result.error || "Reset failed.");
+            setBusy(false, "Error");
+            return;
+        }
 
-    chat.innerHTML = "";
-    addMessage("assistant", result.assistant_message || "Reset complete.");
-    updateContextUI(result);
-    setBusy(false, "Ready");
+        chat.innerHTML = "";
+        addMessage("assistant", result.assistant_message || "Reset complete.");
+        updateContextUI(result);
+        setBusy(false, "Ready");
+    } catch (error) {
+        addMessage("error", `Reset request crashed: ${error}`);
+        setBusy(false, "Error");
+    }
 }
 
 sendBtn.addEventListener("click", submitPrompt);

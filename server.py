@@ -6,11 +6,59 @@ import re
 import textwrap
 import json
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
+def _load_env_file_fallback(path=".env"):
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, "r") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):].strip()
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    continue
+                if (value.startswith('"') and value.endswith('"')) or (
+                    value.startswith("'") and value.endswith("'")
+                ):
+                    value = value[1:-1]
+                os.environ.setdefault(key, value)
+    except Exception:
+        pass
+
+
+def _load_environment():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except Exception:
+        _load_env_file_fallback(".env")
+
+
+_load_environment()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_ORG_ID = os.getenv("OPENAI_ORG_ID")
+OPENAI_PROJECT_ID = os.getenv("OPENAI_PROJECT_ID")
+_missing_env = [k for k, v in [
+    ("OPENAI_API_KEY", OPENAI_API_KEY),
+    ("OPENAI_ORG_ID", OPENAI_ORG_ID),
+    ("OPENAI_PROJECT_ID", OPENAI_PROJECT_ID),
+] if not v]
+if _missing_env:
+    raise RuntimeError(
+        "Missing required environment variables: "
+        + ", ".join(_missing_env)
+        + ". Set them in your shell or in .env at "
+        + os.path.abspath(".env")
+        + "."
+    )
 
 app = Flask(__name__)
 app.secret_key = "fusion-mcp-session-key"
@@ -27,9 +75,9 @@ except:
 
 # Initialize OpenAI client
 client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    organization=os.getenv("OPENAI_ORG_ID"),
-    project=os.getenv("OPENAI_PROJECT_ID")
+    api_key=OPENAI_API_KEY,
+    organization=OPENAI_ORG_ID,
+    project=OPENAI_PROJECT_ID
 )
 
 @app.route("/")
