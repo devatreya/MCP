@@ -25,6 +25,27 @@ function addMessage(role, content) {
     chat.scrollTop = chat.scrollHeight;
 }
 
+function formatRetryContext(retryContext) {
+    if (!retryContext || typeof retryContext !== "object") {
+        return "";
+    }
+
+    const parts = [];
+    if (retryContext.stage) {
+        parts.push(`Stage: ${retryContext.stage}`);
+    }
+    if (retryContext.failed_step) {
+        parts.push(`Failed step: ${retryContext.failed_step}`);
+    }
+    if (Array.isArray(retryContext.issues) && retryContext.issues.length > 0) {
+        parts.push(`Issues: ${retryContext.issues.join(" | ")}`);
+    }
+    if (retryContext.recommended_action) {
+        parts.push(`Recovery: ${retryContext.recommended_action}`);
+    }
+    return parts.join("\n");
+}
+
 function updateContextUI(payload) {
     contextBlock.textContent = payload.state_summary || "No model context available.";
     selectionBlock.textContent = payload.selection_summary || "No selection context available.";
@@ -98,6 +119,13 @@ async function submitPrompt() {
         if (!result.ok) {
             const errorMessage = result.error || "Prompt execution failed.";
             addMessage("error", errorMessage);
+            if (Array.isArray(result.details) && result.details.length > 0) {
+                addMessage("error", `Details: ${result.details.join(" | ")}`);
+            }
+            const retryText = formatRetryContext(result.retry_context);
+            if (retryText) {
+                addMessage("error", retryText);
+            }
             if (result.traceback) {
                 addMessage("error", result.traceback);
             }

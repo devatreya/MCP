@@ -5,6 +5,11 @@ from datetime import datetime
 import re
 import textwrap
 import json
+from fusion_api_knowledge import (
+    apply_api_repairs,
+    build_api_guidance,
+    find_api_issues,
+)
 
 def _load_env_file_fallback(path=".env"):
     if not os.path.exists(path):
@@ -184,6 +189,7 @@ def generate_script():
     fusion_state_source = incoming_fusion_state if isinstance(incoming_fusion_state, dict) else load_fusion_state()
     fusion_state = summarize_fusion_state(fusion_state_source)
     selection_state = summarize_selection_context(incoming_selection_context)
+    api_guidance = build_api_guidance(user_prompt, limit=4)
     system_prompt = (
         "You are a Python assistant for Fusion 360. "
         "Generate ONLY the body of Python code (no imports, no def run, no setup - those are added automatically). "
@@ -215,6 +221,7 @@ def generate_script():
         "    holeCenterWorld = adsk.core.Point3D.create((faceBox.minPoint.x + faceBox.maxPoint.x)/2, (faceBox.minPoint.y + faceBox.maxPoint.y)/2, (faceBox.minPoint.z + faceBox.maxPoint.z)/2)\n"
         "    holeCenter = sketch.modelToSketchSpace(holeCenterWorld)\n"
         "    Then use addByCenterRadius(holeCenter, radius).\n\n"
+        + api_guidance + "\n\n"
         "Fusion model state (authoritative, from add-in):\n"
         + fusion_state + "\n\n"
         "Active selection context:\n"
@@ -247,6 +254,20 @@ def generate_script():
         )
         raw_code = response.choices[0].message.content.strip()
         cleaned_code = clean_generated_code(raw_code)
+    cleaned_code = add_execution_checkpoints(cleaned_code, user_prompt)
+    api_issues = find_api_issues(cleaned_code)
+    if api_issues:
+        return jsonify({
+            "status": "error",
+            "error": "Generated script contained unsupported Fusion API usage.",
+            "details": api_issues,
+            "retry_context": {
+                "stage": "preflight_api_lint",
+                "issues": api_issues,
+                "prompt": user_prompt,
+                "recommended_action": "Regenerate only the failing API steps and preserve already-valid geometry operations.",
+            },
+        }), 400
     clear_model = should_clear_model(user_prompt, model_summary, fusion_state_source)
     wrapped_code = wrap_script_with_run(cleaned_code, clear_model=clear_model)
 
@@ -283,12 +304,7 @@ def clean_generated_code(raw_code):
         "combineFeats.createInput(targetFace.body, toolBodies)",
         raw,
     )
-    # Repair deprecated/invalid setOneSideExtent(direction, distance) pattern.
-    raw = re.sub(
-        r"(\w+)\.setOneSideExtent\(\s*(adsk\.fusion\.ExtentDirections\.[A-Za-z]+)\s*,\s*([^)]+)\)",
-        r"\1.setOneSideExtent(adsk.fusion.DistanceExtentDefinition.create(\3), \2)",
-        raw,
-    )
+    raw = apply_api_repairs(raw)
 
     lines = raw.splitlines()
     cleaned = []
@@ -326,6 +342,42 @@ def clean_generated_code(raw_code):
 
     return "\n".join(cleaned)
 
+def _sanitize_step_label(raw_label, max_len=72):
+    label = (raw_label or "").strip()
+    label = label.replace("\\", "/").replace('"', "'")
+    label = re.sub(r"\s+", " ", label)
+    if len(label) > max_len:
+        return label[: max_len - 3].rstrip() + "..."
+    return label
+
+def add_execution_checkpoints(cleaned_code, user_prompt=""):
+    lines = cleaned_code.splitlines()
+    base_label = "begin generated script"
+    if not any(line.strip() for line in lines):
+        base_label = _sanitize_step_label(user_prompt) or "generated operation"
+    out = [f'checkpoint("step_0: {base_label}")']
+    step_count = 0
+
+    for line in lines:
+        stripped = line.strip()
+
+        if line.startswith("#"):
+            label = _sanitize_step_label(stripped.lstrip("#").strip())
+            if label:
+                step_count += 1
+                out.append(f'checkpoint("step_{step_count}: {label}")')
+
+        # Add checkpoints for top-level feature adds when comments are absent.
+        if not line.startswith((" ", "\t")):
+            m_add = re.search(r"\b(\w+)\.add\(", line)
+            if m_add and "checkpoint(" not in line:
+                step_count += 1
+                out.append(f'checkpoint("step_{step_count}: {m_add.group(1)}.add feature")')
+
+        out.append(line)
+
+    return "\n".join(out)
+
 def normalize_indentation(code: str, indent: int = 8) -> str:
     dedented = textwrap.dedent(code).strip()
     return "\n".join(" " * indent + line if line else "" for line in dedented.splitlines())
@@ -354,15 +406,21 @@ sketches = rootComp.sketches
         "def run(context):\n"
         "    app = adsk.core.Application.get()\n"
         "    ui = app.userInterface\n"
+        "    _mcp_ctx = {'step': 'initializing'}\n"
+        "    def checkpoint(step_name):\n"
+        "        _mcp_ctx['step'] = str(step_name)\n"
         "    try:\n"
+        "        checkpoint('setup')\n"
         + (normalize_indentation(cleanup_block, indent=8) + "\n\n" if clear_model else "")
         + normalize_indentation(setup_block, indent=8) + "\n\n"
         + normalize_indentation(cleaned_code, indent=8)
         + "\n"
         "    except Exception as e:\n"
+        "        failed_step = _mcp_ctx.get('step', 'unknown')\n"
+        "        enriched_error = '[STEP:{}] {}'.format(failed_step, str(e))\n"
         "        if ui:\n"
-        "            ui.messageBox('❌ Runtime Error: {}'.format(str(e)))\n"
-        "        raise\n"
+        "            ui.messageBox('❌ Runtime Error: {}'.format(enriched_error))\n"
+        "        raise RuntimeError(enriched_error) from e\n"
     )
 
 def should_clear_model(user_prompt, model_summary, fusion_state=None):

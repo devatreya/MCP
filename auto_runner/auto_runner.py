@@ -129,7 +129,13 @@ def _handle_prompt(prompt):
 
     generate_result = _runtime.request_generate(prompt, model_state, selection)
     if not generate_result.get("ok"):
-        return {"ok": False, "error": generate_result.get("error", "Failed to generate script.")}
+        data = generate_result.get("data", {}) if isinstance(generate_result.get("data"), dict) else {}
+        return {
+            "ok": False,
+            "error": generate_result.get("error", "Failed to generate script."),
+            "details": data.get("details", []),
+            "retry_context": data.get("retry_context"),
+        }
 
     payload = generate_result.get("data", {})
     script = payload.get("script", "")
@@ -149,6 +155,7 @@ def _handle_prompt(prompt):
             "error": execute_result.get("error", "Script execution failed."),
             "traceback": execute_result.get("traceback", ""),
             "script_file": saved_script_file,
+            "retry_context": execute_result.get("retry_context"),
         }
 
     return {

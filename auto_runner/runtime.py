@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 import traceback
 import urllib.error
@@ -18,6 +19,7 @@ LOG_FILE = os.path.join(ADDIN_DIR, "log.txt")
 
 _cookie_jar = http.cookiejar.CookieJar()
 _http = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_cookie_jar))
+_STEP_TAG_RE = re.compile(r"\[STEP:([^\]]+)\]")
 
 
 def log(message: str):
@@ -34,6 +36,27 @@ def _safe_float(value):
         return float(value)
     except Exception:
         return 0.0
+
+
+def _extract_step_tag(text):
+    if not text:
+        return None
+    match = _STEP_TAG_RE.search(text)
+    if not match:
+        return None
+    return match.group(1).strip() or None
+
+
+def _build_retry_context(stage, failed_step=None, issues=None):
+    context = {
+        "stage": stage,
+        "recommended_action": "Regenerate only the failing step and keep previous successful geometry steps unchanged.",
+    }
+    if failed_step:
+        context["failed_step"] = failed_step
+    if issues:
+        context["issues"] = issues
+    return context
 
 
 def _point_dict(point):
@@ -341,15 +364,24 @@ def execute_wrapped_script(script_text):
     try:
         exec(script_text, injected_scope)
     except Exception as exc:
+        trace = traceback.format_exc()
         return {
             "ok": False,
             "error": f"Failed to compile script: {exc}",
-            "traceback": traceback.format_exc(),
+            "traceback": trace,
+            "retry_context": _build_retry_context(
+                "script_compile",
+                failed_step=_extract_step_tag(str(exc)) or _extract_step_tag(trace),
+            ),
         }
 
     run_fn = injected_scope.get("run")
     if not callable(run_fn):
-        return {"ok": False, "error": "Script did not define run(context)."}
+        return {
+            "ok": False,
+            "error": "Script did not define run(context).",
+            "retry_context": _build_retry_context("script_compile"),
+        }
 
     try:
         run_fn(None)
@@ -360,6 +392,8 @@ def execute_wrapped_script(script_text):
             "selection": selection,
         }
     except Exception as exc:
+        trace = traceback.format_exc()
+        failed_step = _extract_step_tag(str(exc)) or _extract_step_tag(trace)
         if ui:
             try:
                 ui.messageBox(f"Script execution error: {exc}")
@@ -368,7 +402,8 @@ def execute_wrapped_script(script_text):
         return {
             "ok": False,
             "error": f"Script execution error: {exc}",
-            "traceback": traceback.format_exc(),
+            "traceback": trace,
+            "retry_context": _build_retry_context("script_execution", failed_step=failed_step),
         }
 
 
@@ -404,9 +439,21 @@ def _post_json(path, payload, timeout=180):
             body = exc.read().decode("utf-8")
         except Exception:
             body = ""
+        parsed = {}
+        try:
+            parsed = json.loads(body) if body else {}
+        except Exception:
+            parsed = {}
+        if isinstance(parsed, dict) and parsed:
+            return {
+                "ok": False,
+                "error": parsed.get("error", f"Server returned HTTP {exc.code}: {exc.reason}"),
+                "data": parsed,
+            }
         return {
             "ok": False,
             "error": f"Server returned HTTP {exc.code}: {body or exc.reason}",
+            "data": {"raw_body": body} if body else {},
         }
     except Exception as exc:
         return {
