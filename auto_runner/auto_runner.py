@@ -160,7 +160,11 @@ def _handle_prompt(prompt):
 
     return {
         "ok": True,
-        "assistant_message": "Edit applied successfully.",
+        "assistant_message": (
+            f"Edit applied successfully ({payload.get('generation_mode', 'legacy')})."
+            if isinstance(payload, dict)
+            else "Edit applied successfully."
+        ),
         "script_file": saved_script_file,
         "raw_response": payload,
         **_format_context_response(

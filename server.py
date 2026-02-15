@@ -5,6 +5,12 @@ from datetime import datetime
 import re
 import textwrap
 import json
+from cad_ir import plan_from_dict, plan_to_dict
+from llm_adapter import create_text_completion
+from plan_compiler import compile_plan_to_code
+from plan_generator import generate_plan
+from plan_normalizer import normalize_plan
+from plan_validator import validate_plan
 from fusion_api_knowledge import (
     apply_api_repairs,
     build_api_guidance,
@@ -51,6 +57,9 @@ _load_environment()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_ORG_ID = os.getenv("OPENAI_ORG_ID")
 OPENAI_PROJECT_ID = os.getenv("OPENAI_PROJECT_ID")
+OPENAI_MODEL = (os.getenv("OPENAI_MODEL") or "gpt-4o").strip()
+OPENAI_FALLBACK_MODEL = (os.getenv("OPENAI_FALLBACK_MODEL") or "gpt-4o").strip()
+GENERATION_MODE = (os.getenv("GENERATION_MODE") or "legacy").strip().lower()
 _missing_env = [k for k, v in [
     ("OPENAI_API_KEY", OPENAI_API_KEY),
     ("OPENAI_ORG_ID", OPENAI_ORG_ID),
@@ -84,6 +93,48 @@ client = OpenAI(
     organization=OPENAI_ORG_ID,
     project=OPENAI_PROJECT_ID
 )
+
+
+def _model_candidates():
+    ordered = []
+    for name in [OPENAI_MODEL, OPENAI_FALLBACK_MODEL]:
+        candidate = (name or "").strip()
+        if candidate and candidate not in ordered:
+            ordered.append(candidate)
+    if not ordered:
+        ordered.append("gpt-4o")
+    return ordered
+
+
+def _is_model_not_found_error(exc):
+    msg = str(exc).lower()
+    return (
+        "model_not_found" in msg
+        or "does not exist" in msg
+        or "do not have access" in msg
+    )
+
+
+def _create_chat_completion_with_fallback(messages, temperature=0.2, max_tokens=1500):
+    errors = []
+    for model_name in _model_candidates():
+        try:
+            content = create_text_completion(
+                client=client,
+                model_name=model_name,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return content, model_name
+        except Exception as exc:
+            errors.append(f"{model_name}: {exc}")
+            if not _is_model_not_found_error(exc) and "supported in v1/responses" not in str(exc).lower():
+                break
+
+    raise RuntimeError(
+        "OpenAI generation failed. " + " | ".join(errors)
+    )
 
 @app.route("/")
 def home():
@@ -189,71 +240,130 @@ def generate_script():
     fusion_state_source = incoming_fusion_state if isinstance(incoming_fusion_state, dict) else load_fusion_state()
     fusion_state = summarize_fusion_state(fusion_state_source)
     selection_state = summarize_selection_context(incoming_selection_context)
-    api_guidance = build_api_guidance(user_prompt, limit=4)
-    system_prompt = (
-        "You are a Python assistant for Fusion 360. "
-        "Generate ONLY the body of Python code (no imports, no def run, no setup - those are added automatically). "
-        "CRITICAL REQUIREMENTS:\n"
-        "1. Do NOT write setup code (design/rootComp/sketches are already defined)\n"
-        "2. Do NOT write 'def run(context):' or 'import' statements\n"
-        "3. Write ONLY the core logic - no markdown, explanations, or comments\n"
-        "4. Use centimeters for all measurements\n"
-        "5. To find the TOP FACE of a cube, find the face with maximum Z normal:\n"
-        "   topFace = None\n"
-        "   for face in rootComp.bRepBodies.item(0).faces:\n"
-        "       if face.geometry.normal.z > 0.9:\n"
-        "           topFace = face\n"
-        "           break\n"
-        "6. For HOLES/CUTS use Boolean subtraction with Combine feature:\n"
-        "   a) Prefer direct cut extrude: createInput(profile, CutFeatureOperation)\n"
-        "   b) For selected-face cuts, direction must be robust:\n"
-        "      - Try NegativeExtentDirection first\n"
-        "      - Compare targetBody.volume before/after\n"
-        "      - If unchanged, delete feature and retry PositiveExtentDirection\n"
-        "   c) If using combine fallback, target body must be targetFace.body (NOT rootComp.bRepBodies.item(0))\n"
-        "7. Center sketches at origin only when no selected face/location is provided.\n\n"
-        "8. If there are active selections, prioritize them over heuristic face picking.\n"
-        "9. Never recreate the whole model unless the user explicitly asks to reset/start over.\n\n"
-        "10. Active selection collection is ui.activeSelections (NOT app.activeSelections).\n\n"
-        "11. When sketching on targetFace, do NOT use Point3D(0,0,0) as hole center.\n"
-        "    Compute face center in world coordinates and convert to sketch space:\n"
-        "    faceBox = targetFace.boundingBox\n"
-        "    holeCenterWorld = adsk.core.Point3D.create((faceBox.minPoint.x + faceBox.maxPoint.x)/2, (faceBox.minPoint.y + faceBox.maxPoint.y)/2, (faceBox.minPoint.z + faceBox.maxPoint.z)/2)\n"
-        "    holeCenter = sketch.modelToSketchSpace(holeCenterWorld)\n"
-        "    Then use addByCenterRadius(holeCenter, radius).\n\n"
-        + api_guidance + "\n\n"
-        "Fusion model state (authoritative, from add-in):\n"
-        + fusion_state + "\n\n"
-        "Active selection context:\n"
-        + selection_state + "\n\n"
-        "EXAMPLE - Cube centered at origin:\n"
-        "xyPlane = rootComp.xYConstructionPlane\n"
-        "sketch = sketches.add(xyPlane)\n"
-        "lines = sketch.sketchCurves.sketchLines\n"
-        "rect = lines.addTwoPointRectangle(adsk.core.Point3D.create(-5, -5, 0), adsk.core.Point3D.create(5, 5, 0))\n"
-        "prof = sketch.profiles.item(0)\n"
-        "extrudes = rootComp.features.extrudeFeatures\n"
-        "extInput = extrudes.createInput(prof, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)\n"
-        "distance = adsk.core.ValueInput.createByReal(10)\n"
-        "extInput.setDistanceExtent(False, distance)\n"
-        "extrudes.add(extInput)\n\n"
-        "Current model state (from prompts):\n" + model_summary_text
-    )
+    mode_used = "legacy"
+    structured_plan_payload = None
+    llm_model_used = None
 
-    conversation.append({"role": "user", "content": user_prompt})
-    messages = [{"role": "system", "content": system_prompt}] + conversation
-
-    if should_use_selected_face_hole_template(user_prompt, incoming_selection_context):
-        cleaned_code = build_selected_face_hole_code(user_prompt)
+    use_structured = GENERATION_MODE == "structured_v1" and should_use_structured_mode(user_prompt)
+    if use_structured:
+        try:
+            conversation.append({"role": "user", "content": user_prompt})
+            selection_for_validation = (
+                incoming_selection_context if isinstance(incoming_selection_context, dict) else {"count": 0, "items": []}
+            )
+            generated_plan = generate_plan(
+                user_prompt=user_prompt,
+                fusion_state_text=fusion_state,
+                selection_state_text=selection_state,
+                client=client,
+                model=OPENAI_MODEL,
+            )
+            plan = normalize_plan(plan_from_dict(generated_plan))
+            validation_issues = validate_plan(plan, selection_context=selection_for_validation)
+            if validation_issues:
+                return jsonify({
+                    "status": "error",
+                    "error": "Structured plan failed validation.",
+                    "details": validation_issues,
+                    "retry_context": {
+                        "stage": "structured_plan_validation",
+                        "issues": validation_issues,
+                        "prompt": user_prompt,
+                        "recommended_action": "Regenerate only invalid operations and preserve valid operations.",
+                    },
+                }), 400
+            structured_plan_payload = plan_to_dict(plan)
+            cleaned_code = clean_generated_code(compile_plan_to_code(plan))
+            mode_used = "structured_v1"
+        except Exception as exc:
+            return jsonify({
+                "status": "error",
+                "error": f"Structured planning failed: {exc}",
+                "retry_context": {
+                    "stage": "structured_plan_compile",
+                    "prompt": user_prompt,
+                    "recommended_action": "Regenerate a simpler plan with fewer operations.",
+                },
+            }), 400
     else:
-        response = client.chat.completions.create(
-            model="gpt-4o",  # Upgraded to GPT-4o for better code generation
-            messages=messages,
-            temperature=0.2,
-            max_tokens=1500  # Increased for more complex operations
+        api_guidance = build_api_guidance(user_prompt, limit=4)
+        system_prompt = (
+            "You are a Python assistant for Fusion 360. "
+            "Generate ONLY the body of Python code (no imports, no def run, no setup - those are added automatically). "
+            "CRITICAL REQUIREMENTS:\n"
+            "1. Do NOT write setup code (design/rootComp/sketches are already defined)\n"
+            "2. Do NOT write 'def run(context):' or 'import' statements\n"
+            "3. Write ONLY the core logic - no markdown, explanations, or comments\n"
+            "4. Use centimeters for all measurements\n"
+            "5. To find the TOP FACE of a cube, find the face with maximum Z normal:\n"
+            "   topFace = None\n"
+            "   for face in rootComp.bRepBodies.item(0).faces:\n"
+            "       if face.geometry.normal.z > 0.9:\n"
+            "           topFace = face\n"
+            "           break\n"
+            "6. For HOLES/CUTS use Boolean subtraction with Combine feature:\n"
+            "   a) Prefer direct cut extrude: createInput(profile, CutFeatureOperation)\n"
+            "   b) For selected-face cuts, direction must be robust:\n"
+            "      - Try NegativeExtentDirection first\n"
+            "      - Compare targetBody.volume before/after\n"
+            "      - If unchanged, delete feature and retry PositiveExtentDirection\n"
+            "   c) If using combine fallback, target body must be targetFace.body (NOT rootComp.bRepBodies.item(0))\n"
+            "7. Center sketches at origin only when no selected face/location is provided.\n\n"
+            "8. If there are active selections, prioritize them over heuristic face picking.\n"
+            "9. Never recreate the whole model unless the user explicitly asks to reset/start over.\n\n"
+            "10. Active selection collection is ui.activeSelections (NOT app.activeSelections).\n\n"
+            "11. When sketching on targetFace, do NOT use Point3D(0,0,0) as hole center.\n"
+            "    Compute face center in world coordinates and convert to sketch space:\n"
+            "    faceBox = targetFace.boundingBox\n"
+            "    holeCenterWorld = adsk.core.Point3D.create((faceBox.minPoint.x + faceBox.maxPoint.x)/2, (faceBox.minPoint.y + faceBox.maxPoint.y)/2, (faceBox.minPoint.z + faceBox.maxPoint.z)/2)\n"
+            "    holeCenter = sketch.modelToSketchSpace(holeCenterWorld)\n"
+            "    Then use addByCenterRadius(holeCenter, radius).\n\n"
+            + api_guidance + "\n\n"
+            "Fusion model state (authoritative, from add-in):\n"
+            + fusion_state + "\n\n"
+            "Active selection context:\n"
+            + selection_state + "\n\n"
+            "EXAMPLE - Cube centered at origin:\n"
+            "xyPlane = rootComp.xYConstructionPlane\n"
+            "sketch = sketches.add(xyPlane)\n"
+            "lines = sketch.sketchCurves.sketchLines\n"
+            "rect = lines.addTwoPointRectangle(adsk.core.Point3D.create(-5, -5, 0), adsk.core.Point3D.create(5, 5, 0))\n"
+            "prof = sketch.profiles.item(0)\n"
+            "extrudes = rootComp.features.extrudeFeatures\n"
+            "extInput = extrudes.createInput(prof, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)\n"
+            "distance = adsk.core.ValueInput.createByReal(10)\n"
+            "extInput.setDistanceExtent(False, distance)\n"
+            "extrudes.add(extInput)\n\n"
+            "Current model state (from prompts):\n" + model_summary_text
         )
-        raw_code = response.choices[0].message.content.strip()
-        cleaned_code = clean_generated_code(raw_code)
+
+        conversation.append({"role": "user", "content": user_prompt})
+        messages = [{"role": "system", "content": system_prompt}] + conversation
+
+        if should_use_selected_face_hole_template(user_prompt, incoming_selection_context):
+            cleaned_code = build_selected_face_hole_code(user_prompt)
+        else:
+            try:
+                raw_code, llm_model_used = _create_chat_completion_with_fallback(
+                    messages=messages,
+                    temperature=0.2,
+                    max_tokens=1500,
+                )
+                cleaned_code = clean_generated_code(raw_code)
+            except Exception as exc:
+                return jsonify({
+                    "status": "error",
+                    "error": str(exc),
+                    "retry_context": {
+                        "stage": "llm_generation",
+                        "prompt": user_prompt,
+                        "recommended_action": (
+                            "Use an available model (for example OPENAI_MODEL=gpt-4o) "
+                            "or enable structured mode for supported operations."
+                        ),
+                    },
+                }), 400
+
     cleaned_code = add_execution_checkpoints(cleaned_code, user_prompt)
     api_issues = find_api_issues(cleaned_code)
     if api_issues:
@@ -279,7 +389,17 @@ def generate_script():
     session["conversation"] = conversation + [{"role": "assistant", "content": cleaned_code}]
     session["model_summary"] = update_summary(model_summary, user_prompt)
 
-    return jsonify({"status": "success", "script": wrapped_code, "file": filename})
+    response_payload = {
+        "status": "success",
+        "script": wrapped_code,
+        "file": filename,
+        "generation_mode": mode_used,
+    }
+    if structured_plan_payload:
+        response_payload["plan"] = structured_plan_payload
+    if llm_model_used:
+        response_payload["llm_model_used"] = llm_model_used
+    return jsonify(response_payload)
 
 def clean_generated_code(raw_code):
     # Remove markdown code fences
@@ -474,6 +594,24 @@ def requires_selection(user_prompt):
         "current face",
     ]
     return any(k in p for k in keywords)
+
+def should_use_structured_mode(user_prompt):
+    p = (user_prompt or "").lower()
+    structured_keywords = [
+        "cube",
+        "box",
+        "extrude",
+        "hole",
+        "drill",
+        "bore",
+        "chamfer",
+        "bevel",
+        "bracket",
+        "mounting",
+        "l bracket",
+        "angle bracket",
+    ]
+    return any(keyword in p for keyword in structured_keywords)
 
 def has_selected_face(selection_context):
     if not isinstance(selection_context, dict):

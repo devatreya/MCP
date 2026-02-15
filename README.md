@@ -71,6 +71,14 @@ This project enables you to control Fusion 360 through natural language commands
    ```bash
    python3 server.py
    ```
+   Optional structured mode (Phase 1 implementation on this branch):
+   ```bash
+   export GENERATION_MODE=structured_v1
+   export OPENAI_MODEL=gpt-4o
+   python3 server.py
+   ```
+   `structured_v1` currently routes supported intents (`cube`, `extrude`, `hole`, `chamfer`, `mounting bracket`) through:
+   plan generation -> normalization -> validation -> deterministic compilation.
 
 2. **Launch the add-in in Fusion 360:**
    - Open **Tools -> Scripts and Add-Ins -> Add-Ins**
