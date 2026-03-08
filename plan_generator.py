@@ -4,7 +4,6 @@ import json
 import re
 
 from cad_capabilities import CAPABILITY_VERSION, list_supported_operations
-from llm_adapter import create_text_completion
 
 
 _UNIT_TO_CM = {
@@ -251,9 +250,8 @@ def _llm_plan(client, model, user_prompt, fusion_state_text, selection_state_tex
         f"Selection context:\n{selection_state_text}\n"
     )
 
-    raw = create_text_completion(
-        client=client,
-        model_name=model,
+    response = client.chat.completions.create(
+        model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
@@ -261,6 +259,7 @@ def _llm_plan(client, model, user_prompt, fusion_state_text, selection_state_tex
         temperature=0.0,
         max_tokens=600,
     )
+    raw = (response.choices[0].message.content or "").strip()
     raw_json = _extract_json_object(raw)
     if not raw_json:
         raise ValueError("Planner did not return JSON.")

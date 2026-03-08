@@ -6,7 +6,6 @@ import re
 import textwrap
 import json
 from cad_ir import plan_from_dict, plan_to_dict
-from llm_adapter import create_text_completion
 from plan_compiler import compile_plan_to_code
 from plan_generator import generate_plan
 from plan_normalizer import normalize_plan
@@ -58,7 +57,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_ORG_ID = os.getenv("OPENAI_ORG_ID")
 OPENAI_PROJECT_ID = os.getenv("OPENAI_PROJECT_ID")
 OPENAI_MODEL = (os.getenv("OPENAI_MODEL") or "gpt-4o").strip()
-OPENAI_FALLBACK_MODEL = (os.getenv("OPENAI_FALLBACK_MODEL") or "gpt-4o").strip()
 GENERATION_MODE = (os.getenv("GENERATION_MODE") or "legacy").strip().lower()
 _missing_env = [k for k, v in [
     ("OPENAI_API_KEY", OPENAI_API_KEY),
@@ -93,48 +91,6 @@ client = OpenAI(
     organization=OPENAI_ORG_ID,
     project=OPENAI_PROJECT_ID
 )
-
-
-def _model_candidates():
-    ordered = []
-    for name in [OPENAI_MODEL, OPENAI_FALLBACK_MODEL]:
-        candidate = (name or "").strip()
-        if candidate and candidate not in ordered:
-            ordered.append(candidate)
-    if not ordered:
-        ordered.append("gpt-4o")
-    return ordered
-
-
-def _is_model_not_found_error(exc):
-    msg = str(exc).lower()
-    return (
-        "model_not_found" in msg
-        or "does not exist" in msg
-        or "do not have access" in msg
-    )
-
-
-def _create_chat_completion_with_fallback(messages, temperature=0.2, max_tokens=1500):
-    errors = []
-    for model_name in _model_candidates():
-        try:
-            content = create_text_completion(
-                client=client,
-                model_name=model_name,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            return content, model_name
-        except Exception as exc:
-            errors.append(f"{model_name}: {exc}")
-            if not _is_model_not_found_error(exc) and "supported in v1/responses" not in str(exc).lower():
-                break
-
-    raise RuntimeError(
-        "OpenAI generation failed. " + " | ".join(errors)
-    )
 
 @app.route("/")
 def home():
@@ -242,7 +198,6 @@ def generate_script():
     selection_state = summarize_selection_context(incoming_selection_context)
     mode_used = "legacy"
     structured_plan_payload = None
-    llm_model_used = None
 
     use_structured = GENERATION_MODE == "structured_v1" and should_use_structured_mode(user_prompt)
     if use_structured:
@@ -343,26 +298,14 @@ def generate_script():
         if should_use_selected_face_hole_template(user_prompt, incoming_selection_context):
             cleaned_code = build_selected_face_hole_code(user_prompt)
         else:
-            try:
-                raw_code, llm_model_used = _create_chat_completion_with_fallback(
-                    messages=messages,
-                    temperature=0.2,
-                    max_tokens=1500,
-                )
-                cleaned_code = clean_generated_code(raw_code)
-            except Exception as exc:
-                return jsonify({
-                    "status": "error",
-                    "error": str(exc),
-                    "retry_context": {
-                        "stage": "llm_generation",
-                        "prompt": user_prompt,
-                        "recommended_action": (
-                            "Use an available model (for example OPENAI_MODEL=gpt-4o) "
-                            "or enable structured mode for supported operations."
-                        ),
-                    },
-                }), 400
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=1500,
+            )
+            raw_code = response.choices[0].message.content.strip()
+            cleaned_code = clean_generated_code(raw_code)
 
     cleaned_code = add_execution_checkpoints(cleaned_code, user_prompt)
     api_issues = find_api_issues(cleaned_code)
@@ -397,8 +340,6 @@ def generate_script():
     }
     if structured_plan_payload:
         response_payload["plan"] = structured_plan_payload
-    if llm_model_used:
-        response_payload["llm_model_used"] = llm_model_used
     return jsonify(response_payload)
 
 def clean_generated_code(raw_code):

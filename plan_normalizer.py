@@ -15,6 +15,15 @@ _UNIT_TO_CM = {
     "inches": 2.54,
 }
 
+_HOLE_TARGET_ALIASES = {
+    "selected_face": "selected_face_center",
+    "face": "selected_face_center",
+    "this_face": "selected_face_center",
+    "this face": "selected_face_center",
+    "current_face": "selected_face_center",
+    "current face": "selected_face_center",
+}
+
 
 def _to_float(value):
     if isinstance(value, (int, float)):
@@ -95,7 +104,8 @@ def _normalized_params(op_name, params):
             out["extent_mode"] = "through_all"
 
         if "target" in out and isinstance(out["target"], str):
-            out["target"] = out["target"].strip().lower()
+            target = out["target"].strip().lower()
+            out["target"] = _HOLE_TARGET_ALIASES.get(target, target)
 
     elif op_name == "create_chamfer":
         distance_cm = _to_cm(out.get("distance_cm"))

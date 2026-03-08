@@ -9,6 +9,30 @@ from plan_validator import validate_plan
 
 
 class StructuredPipelineTests(unittest.TestCase):
+    def test_hole_target_alias_normalizes_to_canonical(self):
+        plan = normalize_plan(
+            plan_from_dict(
+                {
+                    "version": "v1",
+                    "operations": [
+                        {
+                            "id": "op_1",
+                            "op": "create_hole",
+                            "params": {
+                                "diameter_cm": 0.6,
+                                "depth_cm": 1.0,
+                                "extent_mode": "distance",
+                                "target": "selected_face",
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+        self.assertEqual(plan.operations[0].params.get("target"), "selected_face_center")
+        issues = validate_plan(plan, selection_context={"count": 1, "items": [{"kind": "face"}]})
+        self.assertEqual(issues, [])
+
     def test_bracket_planner_and_compiler_stay_allowlisted(self):
         plan_dict = generate_plan(
             user_prompt="create a mounting bracket 100x60x60x6 mm with m6 holes",
