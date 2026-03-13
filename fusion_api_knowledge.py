@@ -151,11 +151,24 @@ API_CARDS = [
             "tap",
         ],
         "content": (
-            "[hole-features] Preferred hole workflow:\n"
-            "- `holeFeats = rootComp.features.holeFeatures`\n"
-            "- Build `HoleFeatureInput` via createSimpleInput/createCounterboreInput/createCountersinkInput\n"
-            "- Set position and extent on the hole input, then add.\n"
-            "For sketch-profile cutting, ensure selected profile is the intended inner region."
+            "[hole-features] VERIFIED working hole-on-face workflow (live-tested in Fusion 360):\n"
+            "1. Get face:    `targetFace = adsk.fusion.BRepFace.cast(ui.activeSelections.item(0).entity)`\n"
+            "2. Sketch:      `sketch = sketches.add(targetFace)`\n"
+            "3. Face centre in sketch space (Z must be forced to 0):\n"
+            "                `box = targetFace.boundingBox`\n"
+            "                `worldPt = adsk.core.Point3D.create((box.minPoint.x+box.maxPoint.x)/2, (box.minPoint.y+box.maxPoint.y)/2, (box.minPoint.z+box.maxPoint.z)/2)`\n"
+            "                `sketchPt2D = sketch.modelToSketchSpace(worldPt)`\n"
+            "                `sketchPt2D = adsk.core.Point3D.create(sketchPt2D.x, sketchPt2D.y, 0)`  # force Z=0\n"
+            "4. Add point:   `sketchPoint = sketch.sketchPoints.add(sketchPt2D)`\n"
+            "5. Hole input:  `holeFeats = rootComp.features.holeFeatures`\n"
+            "                `holeInput = holeFeats.createSimpleInput(adsk.core.ValueInput.createByReal(diameterCm))`\n"
+            "6. Position:    `holeInput.setPositionBySketchPoint(sketchPoint)`  # ONE argument only\n"
+            "7. Extent — CRITICAL: through-all uses PositiveExtentDirection (NOT Negative):\n"
+            "   Through all: `holeInput.setAllExtent(adsk.fusion.ExtentDirections.PositiveExtentDirection)`\n"
+            "   Blind:       `holeInput.setDistanceExtent(adsk.core.ValueInput.createByReal(depthCm))`\n"
+            "8. Finalise:    `holeFeats.add(holeInput)`\n"
+            "NEVER use NegativeExtentDirection with setAllExtent — causes InternalValidationError.\n"
+            "NEVER use setPositionByPoint or setOneSideExtent on HoleFeatureInput."
         ),
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/HoleFeatures_createSimpleInput.htm",

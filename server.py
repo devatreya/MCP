@@ -384,6 +384,13 @@ def generate_script():
     session["conversation"] = conversation + [{"role": "assistant", "content": cleaned_code}]
     session["model_summary"] = update_summary(model_summary, user_prompt)
 
+    print(f"\n{'='*50}")
+    print(f"  Prompt : {user_prompt}")
+    print(f"  Mode   : {mode_used}")
+    print(f"  Model  : {llm_model_used or OPENAI_MODEL}")
+    print(f"  Script : {filename}")
+    print(f"{'='*50}\n")
+
     response_payload = {
         "status": "success",
         "script": wrapped_code,
