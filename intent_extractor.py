@@ -19,6 +19,7 @@ ALLOWED_FAMILIES = {
     "mirror",
     "boolean",
     "transform",
+    "composite",
     "unknown",
 }
 
@@ -44,19 +45,26 @@ Allowed operation_family values:
 - "mirror": mirroring features or bodies across a plane
 - "boolean": combining, subtracting, or intersecting two bodies
 - "transform": moving, rotating, or scaling a body
+- "composite": a multi-step prompt describing a complete part that requires two or more
+               distinct operations in sequence (e.g. "make a box with a hole and fillets",
+               "create an open-top container with mounting holes")
 - "unknown": prompt cannot be mapped to a Fusion 360 geometric operation
 
 Rules:
-- Convert all lengths to centimeters in params (e.g. "5mm" → 0.5)
+- Convert all lengths to centimeters in params (e.g. "5mm" → 0.5, "80mm" → 8.0)
 - required_selections: list only geometry types the operation REQUIRES from the user
   - hole → always ["face"]
   - shell → always ["face"]
   - fillet/chamfer on specific edges → ["edge"]
   - fillet/chamfer on all edges of a face → ["face"]
   - boolean subtract/intersect → ["body"]
+  - composite → always []  (no pre-selection needed; code handles it end-to-end)
   - If user says "all edges" or "all faces" without a specific selection → []
 - Keep params minimal: only values explicitly stated in the prompt
 - Do not output Python code, markdown, or explanations
+- PREFER "composite" over "unknown" when the prompt clearly describes a CAD part or
+  object, even if it requires multiple operations. Only use "unknown" for prompts that
+  are not CAD-related at all (e.g. "write me a poem", "what is the weather").
 """
 
 

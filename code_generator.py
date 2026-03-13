@@ -83,6 +83,9 @@ def generate_cad_code(
         f"Active selection context:\n{selection_state_text}"
     )
 
+    # Composite (multi-step) prompts generate significantly more code — allow extra tokens.
+    max_tokens = 2500 if intent_result.operation_family == "composite" else 1200
+
     model_names = [m for m in [model, fallback_model] if m]
     raw_code, model_used = create_text_completion_with_fallback(
         client=client,
@@ -92,6 +95,6 @@ def generate_cad_code(
             {"role": "user", "content": user_content},
         ],
         temperature=0,
-        max_tokens=1200,
+        max_tokens=max_tokens,
     )
     return raw_code, model_used

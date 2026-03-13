@@ -51,7 +51,7 @@ class TestIntentResult(unittest.TestCase):
         expected = {
             "sketch", "extrude", "revolve", "sweep",
             "fillet_chamfer", "hole", "shell", "pattern",
-            "mirror", "boolean", "transform", "unknown",
+            "mirror", "boolean", "transform", "composite", "unknown",
         }
         self.assertEqual(ALLOWED_FAMILIES, expected)
 
@@ -217,6 +217,72 @@ class TestGetCardsForFamily(unittest.TestCase):
         cards = get_cards_for_family("mirror")
         combined = "\n".join(cards)
         self.assertIn("mirror", combined.lower())
+
+    def test_composite_family_gets_all_major_cards(self):
+        cards = get_cards_for_family("composite")
+        combined = "\n".join(cards)
+        # Should include extrude, fillet, hole, and shell guidance
+        self.assertIn("extrude", combined.lower())
+        self.assertIn("fillet", combined.lower())
+        self.assertIn("hole", combined.lower())
+        self.assertIn("shell", combined.lower())
+
+    def test_composite_family_returns_non_empty(self):
+        cards = get_cards_for_family("composite")
+        self.assertGreater(len(cards), 5)
+
+
+# ---------------------------------------------------------------------------
+# Test: Composite family — intent extraction and validation
+# ---------------------------------------------------------------------------
+
+class TestCompositeFamily(unittest.TestCase):
+    def _mock_client(self, json_response):
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json_response
+        mock_client.chat.completions.create.return_value = mock_response
+        return mock_client
+
+    def test_composite_intent_extracted(self):
+        payload = (
+            '{"operation_family":"composite","human_intent":"Make an open-top electronics box",'
+            '"params":{"width_cm":8.0,"depth_cm":6.0,"height_cm":4.0,"thickness_cm":0.25,"fillet_radius_cm":0.2},'
+            '"required_selections":[]}'
+        )
+        client = self._mock_client(payload)
+        result = extract_intent(
+            "make me an open-top box 80mm wide, 60mm deep, 40mm tall with 2.5mm walls and 2mm fillets",
+            "Bodies: 0",
+            "No selection",
+            client,
+            "gpt-4o",
+        )
+        self.assertEqual(result.operation_family, "composite")
+        self.assertEqual(result.required_selections, [])
+        self.assertAlmostEqual(result.params.get("width_cm"), 8.0)
+
+    def test_composite_passes_selection_validator_with_no_selection(self):
+        from selection_validator import validate_intent
+        intent = _make_intent("composite", required_selections=[])
+        issues = validate_intent(intent, _no_selection())
+        self.assertEqual(issues, [])
+
+    def test_composite_passes_selection_validator_with_valid_dimensions(self):
+        from selection_validator import validate_intent
+        intent = _make_intent(
+            "composite",
+            params={"width_cm": 8.0, "height_cm": 4.0, "thickness_cm": 0.25},
+        )
+        issues = validate_intent(intent, _no_selection())
+        self.assertEqual(issues, [])
+
+    def test_composite_dimension_zero_still_fails(self):
+        from selection_validator import validate_intent
+        intent = _make_intent("composite", params={"width_cm": 0})
+        issues = validate_intent(intent, _no_selection())
+        self.assertTrue(any("width_cm" in i for i in issues))
 
 
 if __name__ == "__main__":

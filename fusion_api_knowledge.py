@@ -260,14 +260,18 @@ API_CARDS = [
             "pocket",
         ],
         "content": (
-            "[shell-feature] Hollow a body by removing faces and setting wall thickness:\n"
-            "- `shellFeats = rootComp.features.shellFeatures`\n"
-            "- Build an ObjectCollection of faces to remove:\n"
-            "  `inputFaces = adsk.core.ObjectCollection.create(); inputFaces.add(topFace)`\n"
-            "- `shellInput = shellFeats.createInput(inputFaces, False)`  # False = shell inward\n"
-            "- `shellInput.insideThickness = adsk.core.ValueInput.createByReal(thicknessCm)`\n"
-            "- `shellFeats.add(shellInput)`\n"
-            "To get the top face: iterate body.faces and pick the one with the highest max Z bounding box point."
+            "[shell-feature] Hollow a body by removing a selected face and setting wall thickness:\n"
+            "ALWAYS use the selected face from ui.activeSelections as the face to remove — never guess heuristically.\n"
+            "1. Get selected face: `faceToRemove = adsk.fusion.BRepFace.cast(ui.activeSelections.item(0).entity)`\n"
+            "2. Build faces collection:\n"
+            "   `inputFaces = adsk.core.ObjectCollection.create()`\n"
+            "   `inputFaces.add(faceToRemove)`\n"
+            "3. Create shell input: `shellFeats = rootComp.features.shellFeatures`\n"
+            "   `shellInput = shellFeats.createInput(inputFaces, False)`  # False = shell inward\n"
+            "4. Set thickness: `shellInput.insideThickness = adsk.core.ValueInput.createByReal(thicknessCm)`\n"
+            "5. Finalise: `shellFeats.add(shellInput)`\n"
+            "The selected face is the one that gets REMOVED (opened up). All other faces become thin walls.\n"
+            "NEVER create the inputFaces collection without adding the selected face — an empty collection shells with no opening."
         ),
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ShellFeatures_createInput.htm",
@@ -650,6 +654,21 @@ _FAMILY_TO_CARD_IDS = {
     "mirror": ["mirror-feature"],
     "boolean": ["combine-target-body", "extrude-feature-input"],
     "transform": ["move-body"],
+    # composite: inject all major cards so the LLM can handle any combination of ops
+    "composite": [
+        "selected-face-sketch",
+        "extrude-feature-input",
+        "through-all-cut",
+        "fillet-chamfer",
+        "fillet-edge-sets",
+        "hole-features",
+        "shell-feature",
+        "pattern-linear",
+        "pattern-circular",
+        "mirror-feature",
+        "combine-target-body",
+        "move-body",
+    ],
     "unknown": [],
 }
 
