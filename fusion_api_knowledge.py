@@ -214,6 +214,169 @@ API_CARDS = [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ChamferEdgeSets_addEqualDistanceChamferEdgeSet.htm",
         ],
     },
+    {
+        "id": "revolve-feature",
+        "keywords": [
+            "revolve",
+            "rotate",
+            "revolution",
+            "cylinder",
+            "lathe",
+        ],
+        "content": (
+            "[revolve-feature] Revolve a sketch profile around an axis:\n"
+            "- `revolveFeats = rootComp.features.revolveFeatures`\n"
+            "- `revolveInput = revolveFeats.createInput(profile, axisEntity, FeatureOperations.*)`\n"
+            "- `revolveInput.setAngleExtent(isTwoSided, adsk.core.ValueInput.createByReal(angleRadians))`\n"
+            "  For full revolution: angleRadians = 3.14159265 * 2\n"
+            "- Axis entity: use rootComp.xConstructionAxis / yConstructionAxis / zConstructionAxis,\n"
+            "  or a linear BRepEdge cast as ConstructionAxis is NOT valid — use a construction axis.\n"
+            "- `revolveFeats.add(revolveInput)` to finalise."
+        ),
+        "sources": [
+            "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/RevolveFeatures_createInput.htm",
+            "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/RevolveFeatureInput_setAngleExtent.htm",
+        ],
+    },
+    {
+        "id": "shell-feature",
+        "keywords": [
+            "shell",
+            "hollow",
+            "thin wall",
+            "pocket",
+        ],
+        "content": (
+            "[shell-feature] Hollow a body by removing faces and setting wall thickness:\n"
+            "- `shellFeats = rootComp.features.shellFeatures`\n"
+            "- Build an ObjectCollection of faces to remove:\n"
+            "  `inputFaces = adsk.core.ObjectCollection.create(); inputFaces.add(topFace)`\n"
+            "- `shellInput = shellFeats.createInput(inputFaces, False)`  # False = shell inward\n"
+            "- `shellInput.insideThickness = adsk.core.ValueInput.createByReal(thicknessCm)`\n"
+            "- `shellFeats.add(shellInput)`\n"
+            "To get the top face: iterate body.faces and pick the one with the highest max Z bounding box point."
+        ),
+        "sources": [
+            "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ShellFeatures_createInput.htm",
+            "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ShellFeatureInput.htm",
+        ],
+    },
+    {
+        "id": "sweep-feature",
+        "keywords": [
+            "sweep",
+            "extrude along path",
+            "path extrude",
+            "pipe",
+            "tube",
+        ],
+        "content": (
+            "[sweep-feature] Sweep a profile along a sketch path:\n"
+            "- `sweepFeats = rootComp.features.sweepFeatures`\n"
+            "- Path must be a `Path` object: `path = sweepFeats.createPath(sketchCurve)`\n"
+            "  where sketchCurve is a SketchCurve (e.g. a sketch line or arc entity)\n"
+            "- `sweepInput = sweepFeats.createInput(profile, path, FeatureOperations.NewBodyFeatureOperation)`\n"
+            "- `sweepFeats.add(sweepInput)`\n"
+            "Profile sketch and path sketch must be separate sketches."
+        ),
+        "sources": [
+            "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/SweepFeatures_createInput.htm",
+            "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/SweepFeatureInput.htm",
+        ],
+    },
+    {
+        "id": "mirror-feature",
+        "keywords": [
+            "mirror",
+            "symmetry",
+            "reflect",
+        ],
+        "content": (
+            "[mirror-feature] Mirror features or bodies across a plane:\n"
+            "- `mirrorFeats = rootComp.features.mirrorFeatures`\n"
+            "- Collect features to mirror:\n"
+            "  `inputFeatures = adsk.core.ObjectCollection.create()\n"
+            "  inputFeatures.add(lastFeature)`\n"
+            "- Mirror plane: use rootComp.xYConstructionPlane / xZConstructionPlane / yZConstructionPlane\n"
+            "- `mirrorInput = mirrorFeats.createInput(inputFeatures, mirrorPlane)`\n"
+            "- `mirrorFeats.add(mirrorInput)`"
+        ),
+        "sources": [
+            "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/MirrorFeatures_createInput.htm",
+        ],
+    },
+    {
+        "id": "move-body",
+        "keywords": [
+            "move",
+            "translate",
+            "offset body",
+            "shift",
+        ],
+        "content": (
+            "[move-body] Translate a body using a MoveFeature:\n"
+            "- `moveFeats = rootComp.features.moveFeatures`\n"
+            "- Collect bodies:\n"
+            "  `bodies = adsk.core.ObjectCollection.create(); bodies.add(targetBody)`\n"
+            "- Build transform matrix:\n"
+            "  `transform = adsk.core.Matrix3D.create()\n"
+            "  transform.translation = adsk.core.Vector3D.create(xCm, yCm, zCm)`\n"
+            "- `moveInput = moveFeats.createInput(bodies, transform)`\n"
+            "- `moveFeats.add(moveInput)`"
+        ),
+        "sources": [
+            "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/MoveFeatures_createInput.htm",
+        ],
+    },
+    {
+        "id": "pattern-linear",
+        "keywords": [
+            "linear pattern",
+            "rectangular pattern",
+            "array",
+            "repeat",
+        ],
+        "content": (
+            "[pattern-linear] Create a linear (rectangular) pattern of a feature:\n"
+            "- `patFeats = rootComp.features.rectangularPatternFeatures`\n"
+            "- `inputFeatures = adsk.core.ObjectCollection.create(); inputFeatures.add(seedFeature)`\n"
+            "- Direction entity: rootComp.xConstructionAxis / yConstructionAxis / zConstructionAxis\n"
+            "  or a linear BRepEdge\n"
+            "- `patInput = patFeats.createInput(\n"
+            "      inputFeatures, dirAxis,\n"
+            "      adsk.core.ValueInput.createByReal(count),\n"
+            "      adsk.core.ValueInput.createByReal(spacingCm),\n"
+            "      adsk.fusion.PatternDistanceType.SpacingPatternDistanceType)`\n"
+            "- `patFeats.add(patInput)`\n"
+            "Count must be >= 1. Spacing is distance between instances in cm."
+        ),
+        "sources": [
+            "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/RectangularPatternFeatures_createInput.htm",
+        ],
+    },
+    {
+        "id": "pattern-circular",
+        "keywords": [
+            "circular pattern",
+            "polar pattern",
+            "rotational array",
+            "bolt circle",
+        ],
+        "content": (
+            "[pattern-circular] Create a circular pattern of a feature:\n"
+            "- `patFeats = rootComp.features.circularPatternFeatures`\n"
+            "- `inputFeatures = adsk.core.ObjectCollection.create(); inputFeatures.add(seedFeature)`\n"
+            "- Rotation axis: rootComp.xConstructionAxis / yConstructionAxis / zConstructionAxis\n"
+            "- `patInput = patFeats.createInput(inputFeatures, rotationAxis)`\n"
+            "- `patInput.quantity = adsk.core.ValueInput.createByReal(count)`\n"
+            "- `patInput.totalAngle = adsk.core.ValueInput.createByString('360 deg')`  # or partial angle\n"
+            "- `patInput.isSymmetric = False`\n"
+            "- `patFeats.add(patInput)`"
+        ),
+        "sources": [
+            "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/CircularPatternFeatures_createInput.htm",
+        ],
+    },
 ]
 
 
@@ -456,3 +619,41 @@ def find_api_issues(code):
             issues.append(message)
     issues.extend(_find_unknown_method_issues(code))
     return sorted(set(issues))
+
+
+# ---------------------------------------------------------------------------
+# Family-based card retrieval (used by new pipeline code_generator.py)
+# ---------------------------------------------------------------------------
+
+_FAMILY_TO_CARD_IDS = {
+    "sketch": ["selected-face-sketch", "construction-planes", "extrude-feature-input"],
+    "extrude": ["extrude-feature-input", "through-all-cut", "selected-face-sketch"],
+    "revolve": ["revolve-feature", "extrude-feature-input"],
+    "sweep": ["sweep-feature"],
+    "fillet_chamfer": ["fillet-chamfer", "fillet-edge-sets", "chamfer-edge-sets"],
+    "hole": ["hole-features", "through-all-cut", "selected-face-sketch"],
+    "shell": ["shell-feature"],
+    "pattern": ["pattern-linear", "pattern-circular", "pattern-holes"],
+    "mirror": ["mirror-feature"],
+    "boolean": ["combine-target-body", "extrude-feature-input"],
+    "transform": ["move-body"],
+    "unknown": [],
+}
+
+_CARD_BY_ID = {card["id"]: card for card in API_CARDS}
+
+
+def get_cards_for_family(operation_family):
+    """Return a list of formatted API reference strings for the given operation_family."""
+    card_ids = _FAMILY_TO_CARD_IDS.get(operation_family, [])
+    rendered = []
+    for card_id in card_ids:
+        card = _CARD_BY_ID.get(card_id)
+        if not card:
+            continue
+        content = card["content"]
+        sources = card.get("sources") or []
+        if sources:
+            content += "\nDocs: " + ", ".join(sources[:2])
+        rendered.append(content)
+    return rendered

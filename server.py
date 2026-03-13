@@ -5,11 +5,10 @@ from datetime import datetime
 import re
 import textwrap
 import json
-from cad_ir import plan_from_dict, plan_to_dict
-from plan_compiler import compile_plan_to_code
-from plan_generator import generate_plan
-from plan_normalizer import normalize_plan
-from plan_validator import validate_plan
+from llm_adapter import create_text_completion_with_fallback
+from intent_extractor import extract_intent
+from selection_validator import validate_intent
+from code_generator import generate_cad_code
 from fusion_api_knowledge import (
     apply_api_repairs,
     build_api_guidance,
@@ -56,8 +55,9 @@ _load_environment()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_ORG_ID = os.getenv("OPENAI_ORG_ID")
 OPENAI_PROJECT_ID = os.getenv("OPENAI_PROJECT_ID")
-OPENAI_MODEL = (os.getenv("OPENAI_MODEL") or "gpt-4o").strip()
-GENERATION_MODE = (os.getenv("GENERATION_MODE") or "legacy").strip().lower()
+OPENAI_MODEL = (os.getenv("OPENAI_MODEL") or "gpt-5.4").strip()
+OPENAI_FALLBACK_MODEL = (os.getenv("OPENAI_FALLBACK_MODEL") or "gpt-4o").strip()
+GENERATION_MODE = (os.getenv("GENERATION_MODE") or "new_pipeline").strip().lower()
 _missing_env = [k for k, v in [
     ("OPENAI_API_KEY", OPENAI_API_KEY),
     ("OPENAI_ORG_ID", OPENAI_ORG_ID),
@@ -91,6 +91,17 @@ client = OpenAI(
     organization=OPENAI_ORG_ID,
     project=OPENAI_PROJECT_ID
 )
+
+
+def _model_candidates():
+    ordered = []
+    for raw_name in [OPENAI_MODEL, OPENAI_FALLBACK_MODEL]:
+        model_name = (raw_name or "").strip()
+        if model_name and model_name not in ordered:
+            ordered.append(model_name)
+    if not ordered:
+        ordered.append("gpt-4o")
+    return ordered
 
 @app.route("/")
 def home():
@@ -197,47 +208,74 @@ def generate_script():
     fusion_state = summarize_fusion_state(fusion_state_source)
     selection_state = summarize_selection_context(incoming_selection_context)
     mode_used = "legacy"
-    structured_plan_payload = None
+    llm_model_used = None
 
-    use_structured = GENERATION_MODE == "structured_v1" and should_use_structured_mode(user_prompt)
-    if use_structured:
+    use_new_pipeline = GENERATION_MODE != "legacy"
+    if use_new_pipeline:
+        conversation.append({"role": "user", "content": user_prompt})
+        selection_for_validation = (
+            incoming_selection_context if isinstance(incoming_selection_context, dict) else {"count": 0, "items": []}
+        )
+
+        # Step 1: Extract intent
         try:
-            conversation.append({"role": "user", "content": user_prompt})
-            selection_for_validation = (
-                incoming_selection_context if isinstance(incoming_selection_context, dict) else {"count": 0, "items": []}
-            )
-            generated_plan = generate_plan(
+            intent = extract_intent(
                 user_prompt=user_prompt,
                 fusion_state_text=fusion_state,
                 selection_state_text=selection_state,
                 client=client,
                 model=OPENAI_MODEL,
+                fallback_model=OPENAI_FALLBACK_MODEL,
             )
-            plan = normalize_plan(plan_from_dict(generated_plan))
-            validation_issues = validate_plan(plan, selection_context=selection_for_validation)
-            if validation_issues:
-                return jsonify({
-                    "status": "error",
-                    "error": "Structured plan failed validation.",
-                    "details": validation_issues,
-                    "retry_context": {
-                        "stage": "structured_plan_validation",
-                        "issues": validation_issues,
-                        "prompt": user_prompt,
-                        "recommended_action": "Regenerate only invalid operations and preserve valid operations.",
-                    },
-                }), 400
-            structured_plan_payload = plan_to_dict(plan)
-            cleaned_code = clean_generated_code(compile_plan_to_code(plan))
-            mode_used = "structured_v1"
         except Exception as exc:
             return jsonify({
                 "status": "error",
-                "error": f"Structured planning failed: {exc}",
+                "error": f"Intent extraction failed: {exc}",
                 "retry_context": {
-                    "stage": "structured_plan_compile",
+                    "stage": "intent_extraction",
                     "prompt": user_prompt,
-                    "recommended_action": "Regenerate a simpler plan with fewer operations.",
+                    "recommended_action": "Retry with a clearer description of the CAD operation.",
+                },
+            }), 400
+
+        # Step 2: Validate selection and dimension prerequisites
+        validation_issues = validate_intent(intent, selection_for_validation)
+        if validation_issues:
+            return jsonify({
+                "status": "error",
+                "error": "Cannot proceed with this operation.",
+                "details": validation_issues,
+                "retry_context": {
+                    "stage": "intent_validation",
+                    "issues": validation_issues,
+                    "prompt": user_prompt,
+                    "recommended_action": validation_issues[0] if validation_issues else "Check selection and parameters.",
+                },
+            }), 400
+
+        # Step 3: Generate Fusion Python code
+        try:
+            raw_code, llm_model_used = generate_cad_code(
+                intent_result=intent,
+                fusion_state_text=fusion_state,
+                selection_state_text=selection_state,
+                client=client,
+                model=OPENAI_MODEL,
+                fallback_model=OPENAI_FALLBACK_MODEL,
+            )
+            cleaned_code = clean_generated_code(raw_code)
+            mode_used = "new_pipeline"
+        except Exception as exc:
+            return jsonify({
+                "status": "error",
+                "error": f"Code generation failed: {exc}",
+                "retry_context": {
+                    "stage": "code_generation",
+                    "prompt": user_prompt,
+                    "recommended_action": (
+                        "Check OPENAI_MODEL is set to a valid model (e.g. gpt-5.4 or gpt-4o) "
+                        "or retry with a simpler prompt."
+                    ),
                 },
             }), 400
     else:
@@ -298,14 +336,28 @@ def generate_script():
         if should_use_selected_face_hole_template(user_prompt, incoming_selection_context):
             cleaned_code = build_selected_face_hole_code(user_prompt)
         else:
-            response = client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=messages,
-                temperature=0.2,
-                max_tokens=1500,
-            )
-            raw_code = response.choices[0].message.content.strip()
-            cleaned_code = clean_generated_code(raw_code)
+            try:
+                raw_code, llm_model_used = create_text_completion_with_fallback(
+                    client=client,
+                    model_names=_model_candidates(),
+                    messages=messages,
+                    temperature=0.2,
+                    max_tokens=1500,
+                )
+                cleaned_code = clean_generated_code(raw_code)
+            except Exception as exc:
+                return jsonify({
+                    "status": "error",
+                    "error": str(exc),
+                    "retry_context": {
+                        "stage": "llm_generation",
+                        "prompt": user_prompt,
+                        "recommended_action": (
+                            "Use an available model (for example OPENAI_MODEL=gpt-4o) "
+                            "or enable structured mode for supported operations."
+                        ),
+                    },
+                }), 400
 
     cleaned_code = add_execution_checkpoints(cleaned_code, user_prompt)
     api_issues = find_api_issues(cleaned_code)
@@ -338,8 +390,8 @@ def generate_script():
         "file": filename,
         "generation_mode": mode_used,
     }
-    if structured_plan_payload:
-        response_payload["plan"] = structured_plan_payload
+    if llm_model_used:
+        response_payload["llm_model_used"] = llm_model_used
     return jsonify(response_payload)
 
 def clean_generated_code(raw_code):
@@ -447,12 +499,30 @@ def wrap_script_with_run(cleaned_code, clear_model=True):
     cleanup_block = '''
 design = app.activeProduct
 root = design.rootComponent
-for sketch in root.sketches:
-    sketch.deleteMe()
-for body in root.bRepBodies:
-    body.deleteMe()
-for feat in root.features:
-    feat.deleteMe()
+features_to_delete = []
+for i in range(root.features.count):
+    features_to_delete.append(root.features.item(i))
+for feat in features_to_delete:
+    try:
+        feat.deleteMe()
+    except:
+        pass
+sketches_to_delete = []
+for i in range(root.sketches.count):
+    sketches_to_delete.append(root.sketches.item(i))
+for sketch in sketches_to_delete:
+    try:
+        sketch.deleteMe()
+    except:
+        pass
+bodies_to_delete = []
+for i in range(root.bRepBodies.count):
+    bodies_to_delete.append(root.bRepBodies.item(i))
+for body in bodies_to_delete:
+    try:
+        body.deleteMe()
+    except:
+        pass
 '''
     
     # Always include setup code to ensure variables are defined
@@ -535,24 +605,6 @@ def requires_selection(user_prompt):
         "current face",
     ]
     return any(k in p for k in keywords)
-
-def should_use_structured_mode(user_prompt):
-    p = (user_prompt or "").lower()
-    structured_keywords = [
-        "cube",
-        "box",
-        "extrude",
-        "hole",
-        "drill",
-        "bore",
-        "chamfer",
-        "bevel",
-        "bracket",
-        "mounting",
-        "l bracket",
-        "angle bracket",
-    ]
-    return any(keyword in p for keyword in structured_keywords)
 
 def has_selected_face(selection_context):
     if not isinstance(selection_context, dict):
