@@ -45,6 +45,17 @@ Ordering rules:
 - Never duplicate an operation — if the user asks for "4 holes in each corner", that is
   ONE hole step followed by ONE pattern step, not four separate hole steps.
 
+CRITICAL — model state awareness:
+- READ the "Current Fusion model state" carefully before planning steps.
+- If the model already has bodies, features, and faces, do NOT recreate the body from scratch.
+  Only plan steps for the NEW operations the user is requesting.
+- If the model is already shelled (look for thin walls, high face count relative to body count,
+  or shell features in the state), do NOT add another shell step — shelling an already-hollow
+  body will fail.
+- If the model already has fillets, do NOT add redundant fillet steps unless the user explicitly
+  asks for NEW fillets on different edges.
+- Focus on what the user is ADDING or CHANGING, not what already exists.
+
 CRITICAL — sketch merging rules:
 - NEVER create a standalone "sketch" step followed by an "extrude" step. An extrude step
   ALWAYS creates its own sketch internally. Merge them into ONE "extrude" step.

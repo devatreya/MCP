@@ -192,19 +192,34 @@ async function runStepPipeline(steps) {
         }
 
         if (!result.ok) {
+            const errMsg = result.error || "Step failed.";
+            // Check if this is a non-critical failure we can skip
+            const isSkippable = (
+                errMsg.includes("no meaningful shape change") ||
+                errMsg.includes("ASM_RBI_NO_LUMP_LEFT") ||
+                errMsg.includes("does not cause a meaningful shape change") ||
+                errMsg.includes("already") ||
+                errMsg.includes("redundant")
+            );
             addMessage("error", `✗ ${label}`);
-            addMessage("error", result.error || "Step failed.");
-            const retryText = formatRetryContext(result.retry_context);
-            if (retryText) addMessage("error", retryText);
-            if (result.traceback) addMessage("error", result.traceback);
-            setBusy(false, "Error");
-            return;
+            if (isSkippable) {
+                addMessage("error", `⚠️ Skipped: ${errMsg.split("\n")[0]}`);
+                // Continue to next step
+            } else {
+                addMessage("error", errMsg);
+                const retryText = formatRetryContext(result.retry_context);
+                if (retryText) addMessage("error", retryText);
+                if (result.traceback) addMessage("error", result.traceback);
+                setBusy(false, "Error");
+                return;
+            }
+        } else {
+            addMessage("assistant", `✓ ${label}`);
+            updateContextUI(result);
         }
-
-        addMessage("assistant", `✓ ${label}`);
-        updateContextUI(result);
     }
 
+    const failCount = 0; // placeholder for future tracking
     addMessage("assistant", `All ${steps.length} steps completed.`);
     setBusy(false, "Ready");
 }
