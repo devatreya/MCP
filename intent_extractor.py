@@ -65,6 +65,13 @@ Rules:
 - PREFER "composite" over "unknown" when the prompt clearly describes a CAD part or
   object, even if it requires multiple operations. Only use "unknown" for prompts that
   are not CAD-related at all (e.g. "write me a poem", "what is the weather").
+- CORRECTION / REDO prompts: If the user says "redo", "redo the part", "try again",
+  "fix it", "that's wrong", "the size is wrong", "check the prompt again", or similar
+  correction language, treat this as a NEW composite (or appropriate family) intent.
+  Extract the corrected dimensions from the prompt and the conversation history.
+  NEVER classify correction prompts as "unknown".
+  Example: "Redo it, the diameter should be 40mm not 20" → composite with diameter_cm: 4.0
+  Example: "Try again but make it taller, 10cm height" → extrude with height_cm: 10.0
 """
 
 
@@ -97,13 +104,36 @@ def extract_intent(
     client,
     model,
     fallback_model=None,
+    conversation_history=None,
 ):
     """Call the LLM to classify the user's prompt into a structured IntentResult."""
     model_names = [m for m in [model, fallback_model] if m]
+
+    # Include recent conversation history so the model can resolve
+    # redo/correction prompts like "fix it" or "redo the part"
+    history_section = ""
+    if conversation_history:
+        recent = conversation_history[-6:]  # last 3 exchanges max
+        history_lines = []
+        for msg in recent:
+            role = msg.get("role", "")
+            content = (msg.get("content") or "")[:300]
+            if role == "user":
+                history_lines.append(f"  User: {content}")
+            elif role == "assistant":
+                history_lines.append(f"  Assistant: (generated code)")
+        if history_lines:
+            history_section = (
+                "\n\nRecent conversation history (for context on redo/correction prompts):\n"
+                + "\n".join(history_lines)
+                + "\n"
+            )
+
     user_content = (
         f"Prompt: {user_prompt}\n\n"
         f"Fusion model state:\n{fusion_state_text}\n\n"
         f"Active selection context:\n{selection_state_text}"
+        + history_section
     )
     raw_text, _ = create_text_completion_with_fallback(
         client=client,

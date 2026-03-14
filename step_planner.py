@@ -45,6 +45,15 @@ Ordering rules:
 - Never duplicate an operation — if the user asks for "4 holes in each corner", that is
   ONE hole step followed by ONE pattern step, not four separate hole steps.
 
+CRITICAL — sketch merging rules:
+- NEVER create a standalone "sketch" step followed by an "extrude" step. An extrude step
+  ALWAYS creates its own sketch internally. Merge them into ONE "extrude" step.
+  Bad:  step_1: sketch (draw circle), step_2: extrude (extrude it)
+  Good: step_1: extrude (sketch a circle with 40mm diameter on XY plane and extrude 60mm)
+- The same applies to "revolve" and "sweep" — each includes its own sketch creation.
+- A standalone "sketch" step is ONLY valid when the user ONLY wants a sketch with no
+  subsequent 3D operation (e.g. "draw a layout sketch").
+
 requires_selection rules (determines whether the add-in pauses for user input):
 - "shell"        : ALWAYS true  — user must pick which face to open.
                    selection_prompt: "Select the face you want to open/remove"

@@ -343,6 +343,7 @@ def generate_script():
                 client=client,
                 model=OPENAI_MODEL,
                 fallback_model=OPENAI_FALLBACK_MODEL,
+                conversation_history=conversation,
             )
         except Exception as exc:
             return jsonify({
