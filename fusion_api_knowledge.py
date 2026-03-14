@@ -16,13 +16,14 @@ API_CARDS = [
         ],
         "content": (
             "[extrude-feature-input] Use `extrudes.createInput(profile, FeatureOperations.*)` "
-            "then set extent with either:\n"
-            "- `extInput.setDistanceExtent(False, distanceValueInput)`\n"
-            "- `extInput.setOneSideExtent(DistanceExtentDefinition.create(distanceValueInput), direction)`\n"
+            "then set extent with:\n"
+            "- `extInput.setOneSideExtent(DistanceExtentDefinition.create(distanceValueInput), direction)`  ← PREFERRED\n"
+            "- `extInput.setDistanceExtent(isSymmetric, distanceValueInput)`  ← DEPRECATED since Sept 2022; prefer setOneSideExtent\n"
             "For offset starts use property assignment:\n"
             "- `extInput.startExtent = OffsetStartDefinition.create(offsetValueInput)`\n"
             "Do not use `setStartExtent(...)`."
         ),
+        # doc-checked ✅ (setOneSideExtent + startExtent verified); setDistanceExtent confirmed retired Sept 2022
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ExtrudeFeatureInput.htm",
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ExtrudeFeatureInput_startExtent.htm",
@@ -46,6 +47,7 @@ API_CARDS = [
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ThroughAllExtentDefinition_create.htm",
         ],
+        # doc-checked ✅
     },
     {
         "id": "selected-face-sketch",
@@ -65,7 +67,9 @@ API_CARDS = [
         ),
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Sketches_add.htm",
+            "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Sketch_modelToSketchSpace.htm",
         ],
+        # doc-checked ✅ (sketches.add accepts BRepFace); modelToSketchSpace source URL corrected
     },
     {
         "id": "combine-target-body",
@@ -82,6 +86,7 @@ API_CARDS = [
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/CombineFeatures.htm",
         ],
+        # doc-checked ✅ (guidance accurate — targetBody is a BRepBody property)
     },
     {
         "id": "fillet-chamfer",
@@ -101,6 +106,7 @@ API_CARDS = [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/FilletFeatureInput.htm",
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ChamferFeatureInput.htm",
         ],
+        # doc-checked ✅
     },
     {
         "id": "pattern-holes",
@@ -140,6 +146,7 @@ API_CARDS = [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ConstructionPlaneInput.htm",
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ConstructionPlaneInput_setByOffset.htm",
         ],
+        # doc-checked ✅ (all three setters confirmed on ConstructionPlaneInput)
     },
     {
         "id": "hole-features",
@@ -174,6 +181,7 @@ API_CARDS = [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/HoleFeatures_createSimpleInput.htm",
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/HoleFeatureInput.htm",
         ],
+        # doc-checked ✅ + 🔬 live-tested in Fusion 360 (NegativeExtentDirection quirk confirmed by execution)
     },
     {
         "id": "slots",
@@ -225,6 +233,8 @@ API_CARDS = [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/FilletFeatureInput_edgeSetInputs.htm",
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/FilletEdgeSetInputs_addConstantRadiusEdgeSet.htm",
         ],
+        # doc-checked ✅ (edgeSetInputs, addConstantRadiusEdgeSet, addVariableRadiusEdgeSet all confirmed)
+        # Line3D.direction absence also confirmed by docs (only startPoint/endPoint listed)
     },
     {
         "id": "chamfer-edge-sets",
@@ -243,6 +253,7 @@ API_CARDS = [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ChamferFeatureInput_chamferEdgeSets.htm",
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ChamferEdgeSets_addEqualDistanceChamferEdgeSet.htm",
         ],
+        # doc-checked ✅ (chamferEdgeSets property + all three addXxx methods confirmed)
     },
     {
         "id": "revolve-feature",
@@ -257,12 +268,15 @@ API_CARDS = [
             "[revolve-feature] Revolve a sketch profile around an axis:\n"
             "- `revolveFeats = rootComp.features.revolveFeatures`\n"
             "- `revolveInput = revolveFeats.createInput(profile, axisEntity, FeatureOperations.*)`\n"
-            "- `revolveInput.setAngleExtent(isTwoSided, adsk.core.ValueInput.createByReal(angleRadians))`\n"
+            "- `revolveInput.setAngleExtent(isSymmetric, adsk.core.ValueInput.createByReal(angleRadians))`\n"
+            "  isSymmetric=False → one-sided revolve; isSymmetric=True → symmetric about profile plane.\n"
             "  For full revolution: angleRadians = 3.14159265 * 2\n"
-            "- Axis entity: use rootComp.xConstructionAxis / yConstructionAxis / zConstructionAxis,\n"
-            "  or a linear BRepEdge cast as ConstructionAxis is NOT valid — use a construction axis.\n"
+            "- Axis entity: rootComp.xConstructionAxis / yConstructionAxis / zConstructionAxis,\n"
+            "  OR any linear BRepEdge, OR a cylindrical/conical face that defines an axis.\n"
+            "  (Any linear entity is valid — ConstructionAxis is NOT required.)\n"
             "- `revolveFeats.add(revolveInput)` to finalise."
         ),
+        # doc-checked ✅ — isSymmetric (not isTwoSided); BRepEdge is valid axis per docs
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/RevolveFeatures_createInput.htm",
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/RevolveFeatureInput_setAngleExtent.htm",
@@ -294,6 +308,7 @@ API_CARDS = [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ShellFeatures_createInput.htm",
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ShellFeatureInput.htm",
         ],
+        # doc-checked ✅ + 🔬 live-tested (insideThickness property, createInput signature confirmed)
     },
     {
         "id": "sweep-feature",
@@ -307,12 +322,16 @@ API_CARDS = [
         "content": (
             "[sweep-feature] Sweep a profile along a sketch path:\n"
             "- `sweepFeats = rootComp.features.sweepFeatures`\n"
-            "- Path must be a `Path` object: `path = sweepFeats.createPath(sketchCurve)`\n"
-            "  where sketchCurve is a SketchCurve (e.g. a sketch line or arc entity)\n"
+            "- Create a Path object using the STATIC class method (NOT a SweepFeatures method):\n"
+            "  `path = adsk.fusion.Path.create(sketchCurve, adsk.fusion.ChainedCurveOptions.noChainedCurves)`\n"
+            "  where sketchCurve is a SketchCurve entity (line or arc from a sketch).\n"
+            "  ChainedCurveOptions: noChainedCurves=0, connectedChainedCurves=1, tangentChainedCurves=2\n"
             "- `sweepInput = sweepFeats.createInput(profile, path, FeatureOperations.NewBodyFeatureOperation)`\n"
             "- `sweepFeats.add(sweepInput)`\n"
-            "Profile sketch and path sketch must be separate sketches."
+            "Profile sketch and path sketch must be separate sketches.\n"
+            "NEVER call `sweepFeats.createPath(...)` — that method does not exist on SweepFeatures."
         ),
+        # doc-checked ✅ — Path.create() is a static method on adsk.fusion.Path, NOT on SweepFeatures
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/SweepFeatures_createInput.htm",
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/SweepFeatureInput.htm",
@@ -338,6 +357,7 @@ API_CARDS = [
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/MirrorFeatures_createInput.htm",
         ],
+        # doc-checked ✅ (createInput(inputEntities, mirrorPlane) confirmed; construction planes valid)
     },
     {
         "id": "move-body",
@@ -352,12 +372,15 @@ API_CARDS = [
             "- `moveFeats = rootComp.features.moveFeatures`\n"
             "- Collect bodies:\n"
             "  `bodies = adsk.core.ObjectCollection.create(); bodies.add(targetBody)`\n"
-            "- Build transform matrix:\n"
-            "  `transform = adsk.core.Matrix3D.create()\n"
-            "  transform.translation = adsk.core.Vector3D.create(xCm, yCm, zCm)`\n"
-            "- `moveInput = moveFeats.createInput(bodies, transform)`\n"
+            "- PREFERRED (createInput2 — modern API, Jan 2023+):\n"
+            "  `moveInput = moveFeats.createInput2(bodies)` → then set move via MoveFeatureInput properties\n"
+            "- DEPRECATED fallback (createInput — retired Jan 2023, still functional):\n"
+            "  `transform = adsk.core.Matrix3D.create()`\n"
+            "  `transform.translation = adsk.core.Vector3D.create(xCm, yCm, zCm)`\n"
+            "  `moveInput = moveFeats.createInput(bodies, transform)`\n"
             "- `moveFeats.add(moveInput)`"
         ),
+        # doc-checked ✅ — createInput(bodies, matrix) confirmed retired Jan 2023; createInput2(bodies) is current
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/MoveFeatures_createInput.htm",
         ],
@@ -387,6 +410,7 @@ API_CARDS = [
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/RectangularPatternFeatures_createInput.htm",
         ],
+        # doc-checked ✅ (5-arg createInput signature confirmed; SpacingPatternDistanceType confirmed)
     },
     {
         "id": "pattern-circular",
@@ -410,6 +434,7 @@ API_CARDS = [
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/CircularPatternFeatures_createInput.htm",
         ],
+        # doc-checked ✅ (2-arg createInput; quantity/totalAngle/isSymmetric properties all confirmed)
     },
 ]
 
