@@ -43,6 +43,25 @@ FACE CENTER WORKFLOW (when sketching on a selected face):
 CUT DIRECTION ROBUSTNESS (for any cut/hole operation):
 - Try adsk.fusion.ExtentDirections.NegativeExtentDirection first
 - If volume unchanged after add(), delete the feature and retry PositiveExtentDirection
+
+FINDING FACES PROGRAMMATICALLY (when no user selection):
+- Top face: face with centroid at max Z and normal.z > 0.9
+- Bottom face: face with centroid at min Z and normal.z < -0.9
+- Front face: planar face with normal.y > 0.9 (or closest to +Y)
+- Back face: planar face with normal.y < -0.9
+- Use hasattr(face.geometry, 'normal') to filter only planar faces.
+- For curved bodies (cylinders, spheres), there are NO flat front/side faces.
+
+CURVED BODY OPERATIONS (cylinders, cones, spheres):
+- These bodies have curved surfaces, NOT flat front/side faces.
+- To sketch on a curved body's "front" or "side", use a CONSTRUCTION PLANE:
+  `xzPlane = rootComp.xZConstructionPlane`  # "front" plane
+  `yzPlane = rootComp.yZConstructionPlane`  # "side" plane
+  `xyPlane = rootComp.xYConstructionPlane`  # "top/bottom" plane
+  Then: `sketch = sketches.add(xzPlane)`
+- For cuts through curved bodies: sketch on the construction plane, then
+  use CutFeatureOperation with appropriate extent direction.
+- The flat top/bottom faces of a cylinder ARE accessible via face normals.
 """
 
 _SYSTEM_PROMPT_SUFFIX = """\

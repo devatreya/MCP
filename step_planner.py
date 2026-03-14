@@ -55,18 +55,44 @@ CRITICAL — sketch merging rules:
   subsequent 3D operation (e.g. "draw a layout sketch").
 
 requires_selection rules (determines whether the add-in pauses for user input):
-- "shell"        : ALWAYS true  — user must pick which face to open.
-                   selection_prompt: "Select the face you want to open/remove"
-- "hole"         : ALWAYS true  — user must pick which face to drill into.
-                   selection_prompt: "Select the face to drill the holes into"
+- "shell": true ONLY if the prompt does NOT specify which face to remove.
+  If the prompt explicitly names the face (e.g. "remove the top face", "keep the top open",
+  "open the bottom"), set requires_selection: false — code finds the face programmatically
+  using face normals and bounding box analysis (top = max Z normal, bottom = min Z normal,
+  front = max Y normal, etc.).
+  If the prompt is ambiguous (just "shell it"), set requires_selection: true.
+  selection_prompt: "Select the face you want to open/remove"
+- "hole": true ONLY if the target face is ambiguous.
+  If the prompt says "holes through the bottom face" or "holes on top face", set false —
+  code finds the face programmatically. If ambiguous, set true.
+  selection_prompt: "Select the face to drill the holes into"
 - "fillet_chamfer" on ALL edges: false — code iterates all body edges.
-- "fillet_chamfer" on specific edges: true — user picks those edges.
-                   selection_prompt: "Select the edges to fillet"
+- "fillet_chamfer" on specific edges (e.g. "inner edges of the slot"): false — code can
+  identify edges programmatically using feature history or geometric filtering.
+  Only set true if truly ambiguous or user says "select the edges".
+  selection_prompt: "Select the edges to fillet"
 - "extrude" / "revolve" / "sweep" creating from scratch: false — code sketches on XY plane.
+- "extrude" as a cut on a specific face: false if face is named ("front face", "side face").
+  The code should use construction planes or face normals to find the right face.
 - "boolean"      : true  — user picks the tool body.
                    selection_prompt: "Select the body to subtract/join"
 - "pattern" / "mirror": false — code finds the feature programmatically.
 - Default        : false
+
+CRITICAL — finding faces programmatically:
+When requires_selection is false, the step description MUST include enough detail for code
+to locate the geometry. Examples:
+  - "Shell the body to 0.2 cm wall by removing the top face (face with highest Z centroid and upward normal)"
+  - "Cut a slot on the front face (face with Y-normal closest to +Y direction)"
+  - "Drill holes through the bottom face (face with lowest Z centroid and downward normal)"
+
+CRITICAL — working with curved bodies (cylinders, spheres, etc.):
+- Cylinders do NOT have flat "front" or "side" faces — they have curved surfaces.
+- To create a sketch cut on a curved body, use a CONSTRUCTION PLANE (e.g. XZ plane for
+  "front", YZ plane for "side") and sketch there, then cut-extrude through the body.
+- The step description MUST mention using a construction plane when the target body is
+  curved. Example: "Create a rectangular slot on the front of the cylinder by sketching
+  on the XZ construction plane and cutting through the body."
 
 selection_prompt: a clear, friendly instruction shown to the user in the chat panel.
   Set to "" when requires_selection is false.
