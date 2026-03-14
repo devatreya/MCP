@@ -138,6 +138,21 @@ def _handle_prompt(prompt):
         }
 
     payload = generate_result.get("data", {})
+
+    # ── Step pipeline: pass step plan back to JS for sequential execution ─────
+    if payload.get("generation_mode") == "step_pipeline":
+        return {
+            "ok": True,
+            "mode": "step_pipeline",
+            "steps": payload.get("steps", []),
+            "step_count": payload.get("step_count", 0),
+            "assistant_message": payload.get(
+                "assistant_message", "Step plan generated. Executing steps…"
+            ),
+            **_format_context_response(model_state, selection),
+        }
+
+    # ── Single-script path ─────────────────────────────────────────────────────
     script = payload.get("script", "")
     if not script:
         return {"ok": False, "error": "Server response did not include a script."}
@@ -171,6 +186,36 @@ def _handle_prompt(prompt):
             execute_result.get("state", model_state),
             execute_result.get("selection", selection),
         ),
+    }
+
+
+def _handle_execute_step(script, step_id):
+    """Execute a single step script and return the result to the JS step loop."""
+    if _runtime is None:
+        return {"ok": False, "error": "Runtime module is unavailable."}
+    if not script:
+        return {"ok": False, "error": "No script provided for step execution."}
+
+    saved = None
+    try:
+        saved = _runtime.save_script_snapshot(script, prefix=f"step_{step_id}")
+    except Exception:
+        pass
+
+    result = _runtime.execute_wrapped_script(script)
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "error": result.get("error", "Step execution failed."),
+            "traceback": result.get("traceback", ""),
+            "script_file": saved,
+            "retry_context": result.get("retry_context"),
+        }
+
+    return {
+        "ok": True,
+        "script_file": saved,
+        **_format_context_response(result.get("state", {}), result.get("selection", {})),
     }
 
 
@@ -348,11 +393,17 @@ def _palette_incoming(args: adsk.core.HTMLEventArgs):
 
     try:
         action = args.action
-        _log(f"Palette action received: {action}")
+        if action != "requestContext":
+            _log(f"Palette action received: {action}")
         payload = json.loads(args.data) if args.data else {}
 
         if action == "submitPrompt":
             response = _handle_prompt(payload.get("prompt"))
+        elif action == "executeStep":
+            response = _handle_execute_step(
+                payload.get("script", ""),
+                payload.get("step_id", "unknown"),
+            )
         elif action == "requestContext":
             if _runtime is not None:
                 model_state, selection = _runtime.capture_and_store_current_context()

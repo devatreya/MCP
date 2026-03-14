@@ -158,6 +158,41 @@
             color: #ffd5d5;
         }
 
+        /* Step pipeline: selection-pause card */
+        .msg.step-selection {
+            border-color: rgba(255, 210, 60, 0.7);
+            background: rgba(255, 210, 60, 0.1);
+            color: #fff3c0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .msg.step-selection.done {
+            opacity: 0.6;
+        }
+
+        .continue-btn {
+            padding: 4px 14px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 210, 60, 0.8);
+            background: rgba(255, 210, 60, 0.15);
+            color: #fff3c0;
+            font-size: 11px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .continue-btn:hover:not(:disabled) {
+            background: rgba(255, 210, 60, 0.3);
+        }
+
+        .continue-btn:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+
         .composer {
             display: grid;
             grid-template-columns: 1fr 1fr;

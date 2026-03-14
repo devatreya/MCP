@@ -6,9 +6,10 @@ import re
 import textwrap
 import json
 from llm_adapter import create_text_completion_with_fallback
-from intent_extractor import extract_intent
+from intent_extractor import extract_intent, IntentResult
 from selection_validator import validate_intent
 from code_generator import generate_cad_code
+from step_planner import plan_steps
 from fusion_api_knowledge import (
     apply_api_repairs,
     build_api_guidance,
@@ -179,6 +180,122 @@ def run(context):
     
     return jsonify({"status": "reset", "script": cleanup_script, "file": filename})
 
+
+def _handle_step_pipeline(intent, fusion_state, selection_state, user_prompt, client):
+    """Decompose a composite intent into steps, generate per-step code, return step array."""
+    # ── 1. Plan steps ────────────────────────────────────────────────────────
+    try:
+        steps = plan_steps(
+            human_intent=intent.human_intent,
+            params=intent.params,
+            fusion_state_text=fusion_state,
+            client=client,
+            model=OPENAI_MODEL,
+            fallback_model=OPENAI_FALLBACK_MODEL,
+        )
+    except Exception as exc:
+        return jsonify({
+            "status": "error",
+            "error": f"Step planning failed: {exc}",
+            "retry_context": {
+                "stage": "step_planning",
+                "prompt": user_prompt,
+                "recommended_action": (
+                    "Try rephrasing the prompt or breaking it into individual operations."
+                ),
+            },
+        }), 400
+
+    # ── 2. Generate code for each step independently ──────────────────────
+    step_payloads = []
+    llm_model_used = None
+    for step in steps:
+        # Build an IntentResult so code_generator gets the right API cards
+        _sel_req = (
+            ["face"] if step.requires_selection and step.family in ("shell", "hole")
+            else ["edge"] if step.requires_selection and step.family == "fillet_chamfer"
+            else ["body"] if step.requires_selection and step.family == "boolean"
+            else []
+        )
+        step_intent = IntentResult(
+            operation_family=step.family,
+            human_intent=step.description,
+            params=step.params,
+            required_selections=_sel_req,
+        )
+        # Steps that run without user selection must locate geometry programmatically
+        step_selection_ctx = (
+            selection_state if step.requires_selection
+            else (
+                "No user selection — find all target geometry programmatically "
+                "(use bounding box, face normals, body queries, feature history)."
+            )
+        )
+        try:
+            raw_code, llm_model_used = generate_cad_code(
+                intent_result=step_intent,
+                fusion_state_text=fusion_state,
+                selection_state_text=step_selection_ctx,
+                client=client,
+                model=OPENAI_MODEL,
+                fallback_model=OPENAI_FALLBACK_MODEL,
+            )
+            cleaned = clean_generated_code(raw_code)
+        except Exception as exc:
+            return jsonify({
+                "status": "error",
+                "error": f"Code generation failed for {step.step_id} ({step.family}): {exc}",
+                "retry_context": {
+                    "stage": "step_code_generation",
+                    "step_id": step.step_id,
+                },
+            }), 400
+
+        # Lint each step script before returning
+        api_issues = find_api_issues(cleaned)
+        if api_issues:
+            return jsonify({
+                "status": "error",
+                "error": f"Script for {step.step_id} contained unsupported API usage.",
+                "details": api_issues,
+                "retry_context": {
+                    "stage": "preflight_api_lint",
+                    "step_id": step.step_id,
+                    "issues": api_issues,
+                },
+            }), 400
+
+        cleaned = add_execution_checkpoints(cleaned, step.description)
+        wrapped = wrap_script_with_run(cleaned, clear_model=False)
+
+        step_payloads.append({
+            "step_id": step.step_id,
+            "family": step.family,
+            "description": step.description,
+            "script": wrapped,
+            "requires_selection": step.requires_selection,
+            "selection_prompt": step.selection_prompt,
+        })
+
+    print(f"\n{'='*50}")
+    print(f"  Prompt : {user_prompt}")
+    print(f"  Mode   : step_pipeline")
+    families = " → ".join(s["family"] for s in step_payloads)
+    print(f"  Steps  : {len(step_payloads)}  [{families}]")
+    print(f"  Model  : {llm_model_used or OPENAI_MODEL}")
+    print(f"{'='*50}\n")
+
+    return jsonify({
+        "status": "success",
+        "generation_mode": "step_pipeline",
+        "step_count": len(step_payloads),
+        "steps": step_payloads,
+        "assistant_message": (
+            f"I've broken this into {len(step_payloads)} steps. Executing now…"
+        ),
+    })
+
+
 @app.route("/generate", methods=["POST"])
 def generate_script():
     payload = request.get_json(silent=True) or {}
@@ -253,7 +370,17 @@ def generate_script():
                 },
             }), 400
 
-        # Step 3: Generate Fusion Python code
+        # Step 3a: Composite → delegate to step pipeline (returns early)
+        if intent.operation_family == "composite":
+            return _handle_step_pipeline(
+                intent=intent,
+                fusion_state=fusion_state,
+                selection_state=selection_state,
+                user_prompt=user_prompt,
+                client=client,
+            )
+
+        # Step 3: Generate Fusion Python code (single-op families)
         try:
             raw_code, llm_model_used = generate_cad_code(
                 intent_result=intent,

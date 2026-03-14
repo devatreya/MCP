@@ -202,7 +202,24 @@ API_CARDS = [
             "[fillet-edge-sets] New fillet API style uses `FilletFeatureInput.edgeSetInputs` and then:\n"
             "- `edgeSetInputs.addConstantRadiusEdgeSet(...)`\n"
             "- `edgeSetInputs.addVariableRadiusEdgeSet(...)`\n"
-            "Avoid retired direct add-methods on FilletFeatureInput."
+            "Avoid retired direct add-methods on FilletFeatureInput.\n\n"
+            "EDGE DIRECTION FILTERING — CRITICAL: `Line3D` has NO `.direction` attribute.\n"
+            "NEVER write `edge.geometry.direction` — this raises AttributeError at runtime.\n"
+            "Correct pattern to filter edges by orientation (e.g. vertical = Z-aligned):\n"
+            "    edges = adsk.core.ObjectCollection.create()\n"
+            "    for edge in body.edges:\n"
+            "        line = adsk.core.Line3D.cast(edge.geometry)\n"
+            "        if not line:\n"
+            "            continue  # skip curves, arcs\n"
+            "        sp = line.startPoint\n"
+            "        ep = line.endPoint\n"
+            "        dx = ep.x - sp.x; dy = ep.y - sp.y; dz = ep.z - sp.z\n"
+            "        length = (dx*dx + dy*dy + dz*dz) ** 0.5\n"
+            "        if length < 1e-6:\n"
+            "            continue\n"
+            "        if abs(dz / length) > 0.9:   # vertical (Z-aligned)\n"
+            "            edges.add(edge)\n"
+            "TIP: for 'fillet ALL edges' just iterate body.edges and add every edge — no direction filter needed."
         ),
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/FilletFeatureInput_edgeSetInputs.htm",
@@ -421,6 +438,10 @@ API_ISSUE_RULES = [
     (
         r"\.\s*addCenterPointSlot\s*\(",
         "Use `sketch.addCenterToCenterSlot(...)` instead of `SketchLines.addCenterPointSlot(...)`.",
+    ),
+    (
+        r"\.geometry\.direction\b",
+        "`Line3D` has no `.direction` attribute. Compute direction from `line.startPoint` / `line.endPoint` instead.",
     ),
 ]
 

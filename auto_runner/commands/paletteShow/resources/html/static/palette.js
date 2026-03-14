@@ -8,6 +8,11 @@ const resetBtn = document.getElementById("resetBtn");
 const statusBadge = document.getElementById("statusBadge");
 
 let busy = false;
+let refreshInFlight = false;
+let lastContextRefreshAt = 0;
+let _stepContinueResolve = null;   // resolves when user clicks Continue during selection pause
+
+const PASSIVE_REFRESH_MS = 15000;
 
 function setBusy(nextBusy, label) {
     busy = nextBusy;
@@ -49,6 +54,7 @@ function formatRetryContext(retryContext) {
 function updateContextUI(payload) {
     contextBlock.textContent = payload.state_summary || "No model context available.";
     selectionBlock.textContent = payload.selection_summary || "No selection context available.";
+    lastContextRefreshAt = Date.now();
 }
 
 async function sendToFusion(action, payload = {}) {
@@ -79,26 +85,131 @@ async function sendToFusion(action, payload = {}) {
     }
 }
 
-async function refreshContext() {
-    if (busy) {
+async function refreshContext(options = {}) {
+    const background = Boolean(options.background);
+    const quiet = Boolean(options.quiet);
+
+    if (busy || refreshInFlight) {
         return;
     }
 
-    setBusy(true, "Refreshing");
+    refreshInFlight = true;
+    if (!background) {
+        setBusy(true, "Refreshing");
+    }
+
     try {
         const result = await sendToFusion("requestContext");
         if (result.ok) {
             updateContextUI(result);
-            setBusy(false, "Ready");
+            if (!background) {
+                setBusy(false, "Ready");
+            }
         } else {
-            addMessage("error", result.error || "Context refresh failed.");
-            setBusy(false, "Error");
+            if (!quiet) {
+                addMessage("error", result.error || "Context refresh failed.");
+            }
+            if (!background) {
+                setBusy(false, "Error");
+            }
         }
     } catch (error) {
-        addMessage("error", `Context refresh crashed: ${error}`);
-        setBusy(false, "Error");
+        if (!quiet) {
+            addMessage("error", `Context refresh crashed: ${error}`);
+        }
+        if (!background) {
+            setBusy(false, "Error");
+        }
+    } finally {
+        refreshInFlight = false;
     }
 }
+
+// ── Step pipeline helpers ───────────────────────────────────────────────────
+
+function addSelectionPrompt(stepId, promptText) {
+    // Create a selection-prompt card with a Continue button
+    const card = document.createElement("div");
+    card.className = "msg step-selection";
+    card.id = `sel-card-${stepId}`;
+
+    const msg = document.createElement("span");
+    msg.textContent = `⚡ ${promptText}`;
+    card.appendChild(msg);
+
+    const btn = document.createElement("button");
+    btn.textContent = "Continue";
+    btn.className = "continue-btn";
+    btn.addEventListener("click", () => {
+        btn.disabled = true;
+        btn.textContent = "✓ Selected";
+        card.classList.add("done");
+        if (_stepContinueResolve) {
+            const resolve = _stepContinueResolve;
+            _stepContinueResolve = null;
+            resolve();
+        }
+    });
+    card.appendChild(btn);
+    chat.appendChild(card);
+    chat.scrollTop = chat.scrollHeight;
+}
+
+function waitForStepContinue() {
+    return new Promise((resolve) => {
+        _stepContinueResolve = resolve;
+    });
+}
+
+async function runStepPipeline(steps) {
+    addMessage("assistant", `Running ${steps.length} steps…`);
+
+    for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        const label = `Step ${i + 1}/${steps.length}: ${step.description}`;
+
+        // If this step needs the user to select geometry, pause and wait
+        if (step.requires_selection) {
+            setBusy(true, `Step ${i + 1} — Select`);
+            const prompt = step.selection_prompt || "Select the required geometry in Fusion, then click Continue.";
+            addSelectionPrompt(step.step_id, prompt);
+            await waitForStepContinue();
+        }
+
+        setBusy(true, `Step ${i + 1}/${steps.length}`);
+        addMessage("assistant", `⏳ ${label}`);
+
+        let result;
+        try {
+            result = await sendToFusion("executeStep", {
+                script: step.script,
+                step_id: step.step_id,
+            });
+        } catch (err) {
+            addMessage("error", `Step crashed: ${err}`);
+            setBusy(false, "Error");
+            return;
+        }
+
+        if (!result.ok) {
+            addMessage("error", `✗ ${label}`);
+            addMessage("error", result.error || "Step failed.");
+            const retryText = formatRetryContext(result.retry_context);
+            if (retryText) addMessage("error", retryText);
+            if (result.traceback) addMessage("error", result.traceback);
+            setBusy(false, "Error");
+            return;
+        }
+
+        addMessage("assistant", `✓ ${label}`);
+        updateContextUI(result);
+    }
+
+    addMessage("assistant", `All ${steps.length} steps completed.`);
+    setBusy(false, "Ready");
+}
+
+// ── Main prompt submission ──────────────────────────────────────────────────
 
 async function submitPrompt() {
     if (busy) {
@@ -133,6 +244,14 @@ async function submitPrompt() {
             return;
         }
 
+        // Step pipeline: hand off to sequential executor
+        if (result.mode === "step_pipeline") {
+            addMessage("assistant", result.assistant_message || "Step plan ready.");
+            await runStepPipeline(result.steps || []);
+            return;
+        }
+
+        // Single-script result
         addMessage("assistant", result.assistant_message || "Edit applied.");
         updateContextUI(result);
 
@@ -199,7 +318,24 @@ window.fusionJavaScriptHandler = {
 
 refreshContext();
 setInterval(() => {
-    if (!busy) {
-        refreshContext();
+    if (busy || refreshInFlight) {
+        return;
     }
+    if (document.hidden || !document.hasFocus()) {
+        return;
+    }
+    if ((Date.now() - lastContextRefreshAt) < PASSIVE_REFRESH_MS) {
+        return;
+    }
+    refreshContext({ background: true, quiet: true });
 }, 5000);
+
+window.addEventListener("focus", () => {
+    refreshContext({ background: true, quiet: true });
+});
+
+document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+        refreshContext({ background: true, quiet: true });
+    }
+});
