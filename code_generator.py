@@ -4,6 +4,7 @@ import json
 
 from fusion_api_knowledge import get_cards_for_family
 from llm_adapter import create_text_completion_with_fallback
+from rag.retriever import retrieve as rag_retrieve
 
 _SYSTEM_PROMPT_BASE = """\
 You are a Fusion 360 Python code generator.
@@ -65,13 +66,30 @@ def generate_cad_code(
     api_cards = get_cards_for_family(intent_result.operation_family)
     api_section = "\n\n".join(api_cards) if api_cards else "(No specific API reference for this operation family.)"
 
+    # RAG: retrieve relevant API doc chunks (broad context, lower priority than curated cards)
+    rag_chunks = []
+    try:
+        rag_chunks = rag_retrieve(intent_result.human_intent, client, k=6)
+    except Exception:
+        pass  # graceful degradation — RAG is additive, never blocks code gen
+
     params_text = (
         json.dumps(intent_result.params, indent=2) if intent_result.params else "{}"
     )
 
+    # Build prompt: RAG context FIRST (broad), then curated cards AFTER (override/take priority)
+    rag_section = ""
+    if rag_chunks:
+        rag_section = (
+            "\n\nRELEVANT API DOCUMENTATION (retrieved from official Autodesk docs):\n"
+            + "\n\n".join(rag_chunks)
+            + "\n"
+        )
+
     system_prompt = (
         _SYSTEM_PROMPT_BASE
-        + "\n\nFUSION API REFERENCE FOR THIS OPERATION:\n"
+        + rag_section
+        + "\n\nFUSION API REFERENCE FOR THIS OPERATION (curated, highest priority):\n"
         + api_section
         + _SYSTEM_PROMPT_SUFFIX
     )

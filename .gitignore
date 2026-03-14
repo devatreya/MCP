@@ -38,6 +38,10 @@ auto_runner/state.json
 *.swo
 *~
 
+# RAG cache & index (large, machine-specific)
+rag_cache/
+rag_index/
+
 # Sensitive
 *.key
 secrets/
