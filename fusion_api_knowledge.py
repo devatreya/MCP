@@ -211,23 +211,39 @@ API_CARDS = [
             "- `edgeSetInputs.addConstantRadiusEdgeSet(...)`\n"
             "- `edgeSetInputs.addVariableRadiusEdgeSet(...)`\n"
             "Avoid retired direct add-methods on FilletFeatureInput.\n\n"
-            "EDGE DIRECTION FILTERING — CRITICAL: `Line3D` has NO `.direction` attribute.\n"
-            "NEVER write `edge.geometry.direction` — this raises AttributeError at runtime.\n"
-            "Correct pattern to filter edges by orientation (e.g. vertical = Z-aligned):\n"
+            "BANNED PATTERNS — will crash at runtime:\n"
+            "- NEVER `edge.geometry.direction` — Line3D has NO .direction attribute.\n"
+            "- NEVER `SurfaceEvaluator.getPointAtParameter(u, v)` with 2 params — signature is\n"
+            "  `getPointAtParameter(param: Point2D) -> (bool, Point3D)` (single Point2D arg).\n"
+            "  Do NOT call it at all for edge classification — use centroid-based approach instead.\n\n"
+            "PATTERN A — Filter straight (linear) edges by orientation:\n"
             "    edges = adsk.core.ObjectCollection.create()\n"
             "    for edge in body.edges:\n"
             "        line = adsk.core.Line3D.cast(edge.geometry)\n"
             "        if not line:\n"
-            "            continue  # skip curves, arcs\n"
+            "            continue  # skip arcs, circles\n"
             "        sp = line.startPoint\n"
             "        ep = line.endPoint\n"
             "        dx = ep.x - sp.x; dy = ep.y - sp.y; dz = ep.z - sp.z\n"
             "        length = (dx*dx + dy*dy + dz*dz) ** 0.5\n"
             "        if length < 1e-6:\n"
             "            continue\n"
-            "        if abs(dz / length) > 0.9:   # vertical (Z-aligned)\n"
-            "            edges.add(edge)\n"
-            "TIP: for 'fillet ALL edges' just iterate body.edges and add every edge — no direction filter needed."
+            "        if abs(dz / length) > 0.9:   # vertical / Z-aligned\n"
+            "            edges.add(edge)\n\n"
+            "PATTERN B — Filter circular/arc edges by Z height (e.g. bottom circle of cylinder):\n"
+            "    # Circle3D.cast() succeeds on closed circular edges\n"
+            "    edges = adsk.core.ObjectCollection.create()\n"
+            "    for edge in body.edges:\n"
+            "        if adsk.core.Circle3D.cast(edge.geometry) or adsk.core.Arc3D.cast(edge.geometry):\n"
+            "            mid = edge.pointOnEdge  # safe midpoint, always available\n"
+            "            if mid.z < 0.01:  # bottom circle (adjust threshold as needed)\n"
+            "                edges.add(edge)\n\n"
+            "PATTERN C — Fillet ALL edges unconditionally:\n"
+            "    edges = adsk.core.ObjectCollection.create()\n"
+            "    for edge in body.edges:\n"
+            "        edges.add(edge)\n\n"
+            "CHOOSING: bottom circle → Pattern B with low Z; vertical edges → Pattern A with dz check;\n"
+            "all edges → Pattern C."
         ),
         "sources": [
             "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/FilletFeatureInput_edgeSetInputs.htm",
@@ -489,6 +505,16 @@ API_ISSUE_RULES = [
     (
         r"\.geometry\.direction\b",
         "`Line3D` has no `.direction` attribute. Compute direction from `line.startPoint` / `line.endPoint` instead.",
+    ),
+    (
+        r"SurfaceEvaluator.*getPointAtParameter\s*\(\s*\w+\s*,\s*\w+\s*\)",
+        "`SurfaceEvaluator.getPointAtParameter()` takes ONE Point2D arg, not two floats. "
+        "Use `edge.pointOnEdge` for a safe midpoint instead.",
+    ),
+    (
+        r"\.getPointAtParameter\s*\(\s*[\w.]+\s*,\s*[\w.]+\s*\)",
+        "`getPointAtParameter()` takes a single Point2D/parameter arg, not two separate values. "
+        "Use `edge.pointOnEdge` for a safe midpoint.",
     ),
 ]
 
