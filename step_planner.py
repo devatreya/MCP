@@ -92,19 +92,25 @@ requires_selection rules (determines whether the add-in pauses for user input):
 
 CRITICAL — finding faces programmatically:
 When requires_selection is false, the step description MUST include enough detail for code
-to locate the geometry. Use these exact phrasings:
+to locate the geometry.
 
-For FLAT-FACED bodies (boxes, prisms):
-  - "Shell the body to 0.2 cm wall by removing the top face (face with highest Z centroid and upward normal)"
-  - "Cut a slot on the front flat face (face with highest Y centroid and normal.y > 0.9)"
-  - "Drill holes through the bottom flat face (face with lowest Z centroid and normal.z < -0.9)"
+TOP / BOTTOM faces (always findable by normal, works on ANY body type):
+  - "Remove the top face (normal.z > 0.9, centroid at max Z)"
+  - "Drill holes through the bottom face (normal.z < -0.9, centroid at min Z)"
 
-For CURVED bodies (cylinders, cones, spheres) — ALWAYS use construction planes:
-  - "Cut a slot on the front of the cylinder by sketching on the XZ construction plane (rootComp.xZConstructionPlane)"
-  - "Drill holes through the bottom flat face of the cylinder (find face with normal.z < -0.9 — the bottom cap IS flat)"
-  - "Create a pattern about the cylinder axis using rootComp.zConstructionAxis"
+FRONT / BACK / SIDE faces — ONLY for flat-faced bodies (boxes, prisms):
+  - "Cut on the front face (normal.y > 0.9, centroid at max Y)" — only for boxes
+  If the body is a CYLINDER, cone, or sphere: there is NO flat front/side face.
+  DO NOT write "front face (face with Y-normal...)" for curved bodies.
 
-NEVER write "face with Y-normal closest to +Y direction" for a cylinder — cylinders have no flat side faces.
+CURVED body side operations — ALWAYS requires_selection: true:
+  For any cut/sketch on the side of a curved body, set requires_selection: true.
+  The step description must say: "sketch on the user-selected plane"
+  selection_prompt: "Select the plane to sketch on — click the Front (XZ), Right (YZ),
+  or Top (XY) construction plane in the browser, then click Continue."
+
+PATTERN axis — never derive from a face:
+  - "Create a circular pattern using rootComp.zConstructionAxis" (for Z-extruded bodies)
 
 CRITICAL — Fusion 360 coordinate system (ViewCube mapping, always fixed):
   "front"  → XZ construction plane  (rootComp.xZConstructionPlane)

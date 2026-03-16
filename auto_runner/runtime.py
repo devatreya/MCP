@@ -394,14 +394,18 @@ def execute_wrapped_script(script_text):
     except Exception as exc:
         trace = traceback.format_exc()
         failed_step = _extract_step_tag(str(exc)) or _extract_step_tag(trace)
-        if ui:
+        error_str = str(exc)
+        # SELECTION_REQUIRED is a controlled flow signal — skip the popup,
+        # it will be handled gracefully by the step pipeline in the palette.
+        is_selection_required = "SELECTION_REQUIRED:" in error_str
+        if ui and not is_selection_required:
             try:
                 ui.messageBox(f"Script execution error: {exc}")
             except Exception:
                 pass
         return {
             "ok": False,
-            "error": f"Script execution error: {exc}",
+            "error": f"Script execution error: {error_str}",
             "traceback": trace,
             "retry_context": _build_retry_context("script_execution", failed_step=failed_step),
         }
