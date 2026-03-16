@@ -218,6 +218,18 @@ def _selection_item(entity, index):
         item["point"] = _point_dict(vertex.geometry)
         return item
 
+    construction_plane = adsk.fusion.ConstructionPlane.cast(entity)
+    if construction_plane:
+        item["kind"] = "constructionplane"
+        item["plane_name"] = getattr(construction_plane, "name", "")
+        return item
+
+    construction_axis = adsk.fusion.ConstructionAxis.cast(entity)
+    if construction_axis:
+        item["kind"] = "constructionaxis"
+        item["axis_name"] = getattr(construction_axis, "name", "")
+        return item
+
     sketch_point = adsk.fusion.SketchPoint.cast(entity)
     if sketch_point:
         item["kind"] = "sketch_point"
