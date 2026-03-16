@@ -1,6 +1,7 @@
 """Step planner: decomposes a composite CAD intent into an ordered sequence of single-family steps."""
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import List
 
@@ -162,6 +163,82 @@ def _extract_json(text: str):
     return None
 
 
+# ── Deterministic post-processing ─────────────────────────────────────────
+# The LLM can't reliably detect curved bodies from model state text alone.
+# This post-processor catches "front/side/back/left/right face" operations
+# that would fail on curved bodies and forces them to ask the user to select
+# a construction plane instead.
+
+# Pattern matches "front face", "side face", "right face", etc. in step descriptions
+_SIDE_FACE_PATTERN = re.compile(
+    r"\b(front|back|left|right|side)\s+(face|surface)\b", re.IGNORECASE
+)
+
+# Families where a side-face reference means "sketch on that face" or "cut through it"
+_SIDE_FACE_FAMILIES = {"extrude", "sketch", "revolve", "sweep", "hole", "fillet_chamfer"}
+
+_PLANE_SELECTION_PROMPT = (
+    "Select the plane to sketch on — click the Front (XZ), Right (YZ), "
+    "or Top (XY) construction plane in the browser panel, then click Continue."
+)
+
+
+def _has_curved_body(fusion_state_text: str) -> bool:
+    """Heuristic: detect if the model likely contains a curved body (cylinder, cone, sphere).
+
+    Checks for low face counts relative to body count, or keywords in the state text.
+    A box has 6 faces; a cylinder has 3 (top, bottom, curved side).
+    """
+    if not fusion_state_text:
+        return False
+    text_lower = fusion_state_text.lower()
+    # Explicit indicators
+    if any(kw in text_lower for kw in ("cylinder", "cone", "sphere", "torus", "curved")):
+        return True
+    # Heuristic: if any body has ≤ 3 faces, it's likely curved
+    # The model state text format is "faces N" (from summarize_fusion_state)
+    # or "face_count: N" (from raw JSON)
+    face_counts = re.findall(r"(?:faces|face_count['\"]?\s*[:=])\s*(\d+)", fusion_state_text)
+    for fc in face_counts:
+        if int(fc) <= 3:
+            return True
+    # Also check for equal X and Y bounding box dimensions (cylinder signature)
+    # Format: "size X.XXxY.YYxZ.ZZ cm"
+    size_matches = re.findall(r"size\s+([\d.]+)x([\d.]+)x([\d.]+)", fusion_state_text)
+    for sx, sy, sz in size_matches:
+        x, y = float(sx), float(sy)
+        if x > 0 and y > 0 and abs(x - y) < 0.01:
+            # Equal X and Y dimensions suggest a cylinder (circular cross-section)
+            return True
+    return False
+
+
+def _postprocess_steps(steps: List["StepPlan"], fusion_state_text: str) -> List["StepPlan"]:
+    """Deterministic override: force plane selection for side-face operations on curved bodies.
+
+    If the model state suggests a curved body exists, any step that references
+    front/back/side/left/right face operations gets requires_selection=True with
+    a plane selection prompt. This prevents the generated code from searching for
+    flat faces that don't exist on cylinders/cones/spheres.
+    """
+    if not _has_curved_body(fusion_state_text):
+        return steps  # box/prism — LLM's face-finding approach is fine
+
+    for step in steps:
+        if step.family not in _SIDE_FACE_FAMILIES:
+            continue
+        if _SIDE_FACE_PATTERN.search(step.description):
+            step.requires_selection = True
+            step.selection_prompt = _PLANE_SELECTION_PROMPT
+            # Rewrite the description to say "sketch on user-selected plane"
+            # instead of "front face (normal.y > 0.9)"
+            step.description = _SIDE_FACE_PATTERN.sub(
+                "user-selected plane", step.description
+            )
+
+    return steps
+
+
 def plan_steps(
     human_intent: str,
     params: dict,
@@ -218,5 +295,8 @@ def plan_steps(
                 selection_prompt=str(raw_step.get("selection_prompt") or "").strip(),
             )
         )
+
+    # Deterministic post-processing: override side-face operations on curved bodies
+    steps = _postprocess_steps(steps, fusion_state_text)
 
     return steps
