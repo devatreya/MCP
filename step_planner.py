@@ -116,12 +116,15 @@ CRITICAL — Fusion 360 coordinate system (ViewCube mapping, always fixed):
 
 CRITICAL — working with curved bodies (cylinders, spheres, etc.):
 - Cylinders do NOT have flat "front", "right", or "side" faces — only curved surfaces.
-- ALWAYS use a construction plane for sketching cuts on curved bodies.
-- The step description MUST name the construction plane explicitly, not "the front face".
-  Bad:  "Cut a slot on the front face of the cylinder"
-  Good: "Cut a slot on the front of the cylinder by sketching on the XZ construction plane"
-- The BOTTOM and TOP flat faces of a cylinder ARE flat and can be found by face normals.
-  Use "bottom flat face (normal.z < -0.9)" and "top flat face (normal.z > 0.9)" in descriptions.
+- For any sketch cut on a curved body's side, set requires_selection: true and ask the user
+  to select the sketch plane. This is more accurate than guessing the construction plane.
+  selection_prompt: "Select the plane to sketch on — click the Front, Right, or Top
+  construction plane in the browser panel or click a flat face in the 3D canvas."
+- The BOTTOM and TOP flat faces of a cylinder ARE flat and DO NOT need plane selection.
+  Use requires_selection: false and describe the face by normal:
+  "bottom flat face (normal.z < -0.9)" / "top flat face (normal.z > 0.9)"
+- Pattern axes for cylinders: always use rootComp.zConstructionAxis for Z-extruded cylinders.
+  Never derive axis from a face. requires_selection: false.
 
 selection_prompt: a clear, friendly instruction shown to the user in the chat panel.
   Set to "" when requires_selection is false.

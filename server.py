@@ -213,6 +213,7 @@ def _handle_step_pipeline(intent, fusion_state, selection_state, user_prompt, cl
         # Build an IntentResult so code_generator gets the right API cards
         _sel_req = (
             ["face"] if step.requires_selection and step.family in ("shell", "hole")
+            else ["plane"] if step.requires_selection and step.family in ("extrude", "sketch", "revolve", "sweep")
             else ["edge"] if step.requires_selection and step.family == "fillet_chamfer"
             else ["body"] if step.requires_selection and step.family == "boolean"
             else []

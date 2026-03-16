@@ -31,6 +31,17 @@ SELECTION WORKFLOW (use this exact pattern when you need selected geometry):
 - Cast to body:   body = adsk.fusion.BRepBody.cast(entity)
 - All selected:   [ui.activeSelections.item(i).entity for i in range(ui.activeSelections.count)]
 
+PLANE SELECTION WORKFLOW (when user selects a construction plane or flat face to sketch on):
+- Get entity:        entity = ui.activeSelections.item(0).entity
+- Try ConstructionPlane first (user clicked a browser plane):
+    sketchPlane = adsk.fusion.ConstructionPlane.cast(entity)
+- Fallback to BRepFace (user clicked a flat face):
+    if not sketchPlane: sketchPlane = adsk.fusion.BRepFace.cast(entity)
+- Guard:             if not sketchPlane: raise Exception("Selected entity is not a plane or face.")
+- Use it:            sketch = sketches.add(sketchPlane)
+Use this pattern whenever the step description says "sketch on selected plane" or
+"requires_selection for sketch plane" — do NOT hardcode rootComp.xZConstructionPlane.
+
 FACE CENTER WORKFLOW (when sketching on a selected face):
 - sketch = sketches.add(targetFace)
 - box = targetFace.boundingBox

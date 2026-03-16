@@ -32,13 +32,21 @@ _FAMILY_SELECTION_RULES = {
 
 
 def _has_selection_kind(selection_context, *kinds):
-    """Return True if any of the listed kinds appears in selection_context."""
+    """Return True if any of the listed kinds appears in selection_context.
+
+    'plane' is an alias that matches 'constructionplane', 'plane', and 'face'
+    so that sketch-plane selections work regardless of how Fusion reports them.
+    """
     if not isinstance(selection_context, dict):
         return False
     items = selection_context.get("items")
     if not isinstance(items, list):
         return False
     target_kinds = {str(k).strip().lower() for k in kinds}
+    # 'plane' is satisfied by any planar entity the user can click
+    plane_aliases = {"constructionplane", "plane", "face"}
+    if "plane" in target_kinds:
+        target_kinds |= plane_aliases
     for item in items:
         if not isinstance(item, dict):
             continue
