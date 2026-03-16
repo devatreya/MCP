@@ -230,39 +230,90 @@ def _has_curved_body(fusion_state_text: str) -> bool:
     return False
 
 
-def _postprocess_steps(steps: List["StepPlan"], fusion_state_text: str) -> List["StepPlan"]:
+# Patterns that indicate the user or LLM already specified an explicit plane
+_EXPLICIT_PLANE_PATTERN = re.compile(
+    r"\b(x[yz]|y[xz]|z[xy])\s*(plane|construction\s*plane)\b"
+    r"|rootComp\.\w+ConstructionPlane\b"
+    r"|\bconstruction\s*plane\b",
+    re.IGNORECASE,
+)
+
+# Map user-specified plane names to rootComp properties
+_USER_PLANE_TO_CODE = {
+    "xy": ("rootComp.xYConstructionPlane", "XY plane"),
+    "xz": ("rootComp.xZConstructionPlane", "XZ plane"),
+    "yz": ("rootComp.yZConstructionPlane", "YZ plane"),
+    "yx": ("rootComp.xYConstructionPlane", "XY plane"),
+    "zx": ("rootComp.xZConstructionPlane", "XZ plane"),
+    "zy": ("rootComp.yZConstructionPlane", "YZ plane"),
+}
+
+
+def _postprocess_steps(
+    steps: List["StepPlan"], fusion_state_text: str, user_intent: str = "",
+) -> List["StepPlan"]:
     """Deterministic override for curved bodies: rewrite side-face references to
     use named construction planes directly, avoiding broken face-normal searches.
 
-    If a direction is named (front/back/left/right), map it to the correct
-    construction plane and set requires_selection=False. The code generator
-    will use rootComp.xZConstructionPlane etc. directly.
-
-    Only ask for user selection when no direction is specified (e.g. "the side").
+    Priority:
+    1. If the user's prompt or step description already names a specific plane
+       (e.g. "on the YZ plane"), honour that — use the named plane directly.
+    2. If a direction is named (front/back/left/right), map it to the correct
+       construction plane via the ViewCube mapping.
+    3. If neither direction nor plane is given, ask the user to select.
     """
     if not _has_curved_body(fusion_state_text):
         return steps  # box/prism — LLM's face-finding approach is fine
 
+    # Check if user explicitly named a plane in their prompt
+    user_plane_match = re.search(
+        r"\b(x[yz]|y[xz]|z[xy])\s*(?:plane|construction\s*plane)?\b", user_intent, re.IGNORECASE
+    ) if user_intent else None
+    user_specified_plane = None
+    if user_plane_match:
+        plane_key = user_plane_match.group(1).lower()
+        # Normalise: sort the two letters so "zx" → "xz"
+        plane_key = "".join(sorted(plane_key))
+        user_specified_plane = _USER_PLANE_TO_CODE.get(plane_key)
+
     for step in steps:
         if step.family not in _SIDE_FACE_FAMILIES:
             continue
+
+        # 1. If the step description already has an explicit plane reference,
+        #    don't override — the LLM already got it right
+        if _EXPLICIT_PLANE_PATTERN.search(step.description):
+            step.requires_selection = False
+            step.selection_prompt = ""
+            continue
+
         match = _SIDE_FACE_PATTERN.search(step.description)
         if not match:
             continue
 
+        # 2. If the user specified a plane in their prompt, honour it
+        if user_specified_plane:
+            plane_code, plane_label = user_specified_plane
+            step.description = _SIDE_FACE_PATTERN.sub(
+                f"{plane_code} ({plane_label})", step.description
+            )
+            step.requires_selection = False
+            step.selection_prompt = ""
+            continue
+
+        # 3. Map the direction word to a construction plane
         direction = match.group(1).lower()
         plane_info = _DIRECTION_TO_PLANE.get(direction)
 
         if plane_info:
             plane_code, plane_label = plane_info
-            # Rewrite description to use construction plane directly
             step.description = _SIDE_FACE_PATTERN.sub(
                 f"{plane_code} ({plane_label})", step.description
             )
             step.requires_selection = False
             step.selection_prompt = ""
         else:
-            # Unknown direction — ask user to select
+            # No direction, no user plane — ask user to select
             step.requires_selection = True
             step.selection_prompt = _AMBIGUOUS_SELECTION_PROMPT
             step.description = _SIDE_FACE_PATTERN.sub(
@@ -330,6 +381,6 @@ def plan_steps(
         )
 
     # Deterministic post-processing: override side-face operations on curved bodies
-    steps = _postprocess_steps(steps, fusion_state_text)
+    steps = _postprocess_steps(steps, fusion_state_text, user_intent=human_intent)
 
     return steps
