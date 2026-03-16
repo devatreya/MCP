@@ -77,9 +77,12 @@ def generate_cad_code(
     client,
     model,
     fallback_model=None,
+    lint_feedback=None,
 ):
     """
     Generate Fusion 360 Python code body for the given intent.
+    lint_feedback: list of issue strings from a previous failed attempt — injected as a
+                   follow-up user message so the model self-corrects on retry.
     Returns (code_str, model_used).
     """
     api_cards = get_cards_for_family(intent_result.operation_family)
@@ -120,6 +123,31 @@ def generate_cad_code(
         f"Active selection context:\n{selection_state_text}"
     )
 
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+    # If a previous attempt failed lint, feed the errors back as a follow-up
+    # so the model knows exactly what to fix on retry.
+    if lint_feedback:
+        issues_text = "\n".join(f"- {issue}" for issue in lint_feedback)
+        messages.append({
+            "role": "assistant",
+            "content": "(previous attempt — contained API errors, rewriting)",
+        })
+        messages.append({
+            "role": "user",
+            "content": (
+                "Your previous code failed the API lint check with these issues:\n"
+                + issues_text
+                + "\n\nRewrite the code from scratch, avoiding every one of the above issues. "
+                "Use edge.pointOnEdge instead of getPointAtParameter. "
+                "Use Circle3D.cast()/Arc3D.cast() to detect circular edges. "
+                "Do NOT call SurfaceEvaluator methods at all."
+            ),
+        })
+
     # Composite (multi-step) prompts generate significantly more code — allow extra tokens.
     max_tokens = 2500 if intent_result.operation_family == "composite" else 1200
 
@@ -127,10 +155,7 @@ def generate_cad_code(
     raw_code, model_used = create_text_completion_with_fallback(
         client=client,
         model_names=model_names,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
+        messages=messages,
         temperature=0,
         max_tokens=max_tokens,
     )

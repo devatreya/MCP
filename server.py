@@ -231,32 +231,43 @@ def _handle_step_pipeline(intent, fusion_state, selection_state, user_prompt, cl
                 "(use bounding box, face normals, body queries, feature history)."
             )
         )
-        try:
-            raw_code, llm_model_used = generate_cad_code(
-                intent_result=step_intent,
-                fusion_state_text=fusion_state,
-                selection_state_text=step_selection_ctx,
-                client=client,
-                model=OPENAI_MODEL,
-                fallback_model=OPENAI_FALLBACK_MODEL,
-            )
-            cleaned = clean_generated_code(raw_code)
-        except Exception as exc:
-            return jsonify({
-                "status": "error",
-                "error": f"Code generation failed for {step.step_id} ({step.family}): {exc}",
-                "retry_context": {
-                    "stage": "step_code_generation",
-                    "step_id": step.step_id,
-                },
-            }), 400
+        # Generate code — retry up to 2 times if lint fails, feeding errors back to the model
+        _MAX_LINT_RETRIES = 2
+        cleaned = None
+        api_issues = []
+        lint_feedback = None
+        for _attempt in range(_MAX_LINT_RETRIES + 1):
+            try:
+                raw_code, llm_model_used = generate_cad_code(
+                    intent_result=step_intent,
+                    fusion_state_text=fusion_state,
+                    selection_state_text=step_selection_ctx,
+                    client=client,
+                    model=OPENAI_MODEL,
+                    fallback_model=OPENAI_FALLBACK_MODEL,
+                    lint_feedback=lint_feedback,
+                )
+                cleaned = clean_generated_code(raw_code)
+            except Exception as exc:
+                return jsonify({
+                    "status": "error",
+                    "error": f"Code generation failed for {step.step_id} ({step.family}): {exc}",
+                    "retry_context": {
+                        "stage": "step_code_generation",
+                        "step_id": step.step_id,
+                    },
+                }), 400
 
-        # Lint each step script before returning
-        api_issues = find_api_issues(cleaned)
+            api_issues = find_api_issues(cleaned)
+            if not api_issues:
+                break  # clean — proceed
+            print(f"  [lint-retry {_attempt+1}/{_MAX_LINT_RETRIES}] {step.step_id}: {api_issues}")
+            lint_feedback = api_issues  # feed back to model on next attempt
+
         if api_issues:
             return jsonify({
                 "status": "error",
-                "error": f"Script for {step.step_id} contained unsupported API usage.",
+                "error": f"Script for {step.step_id} still had API issues after {_MAX_LINT_RETRIES} retries.",
                 "details": api_issues,
                 "retry_context": {
                     "stage": "preflight_api_lint",
@@ -381,29 +392,52 @@ def generate_script():
                 client=client,
             )
 
-        # Step 3: Generate Fusion Python code (single-op families)
-        try:
-            raw_code, llm_model_used = generate_cad_code(
-                intent_result=intent,
-                fusion_state_text=fusion_state,
-                selection_state_text=selection_state,
-                client=client,
-                model=OPENAI_MODEL,
-                fallback_model=OPENAI_FALLBACK_MODEL,
-            )
-            cleaned_code = clean_generated_code(raw_code)
-            mode_used = "new_pipeline"
-        except Exception as exc:
+        # Step 3: Generate Fusion Python code (single-op families) with lint-retry
+        _MAX_LINT_RETRIES = 2
+        cleaned_code = None
+        _single_lint_issues = []
+        _single_lint_feedback = None
+        for _attempt in range(_MAX_LINT_RETRIES + 1):
+            try:
+                raw_code, llm_model_used = generate_cad_code(
+                    intent_result=intent,
+                    fusion_state_text=fusion_state,
+                    selection_state_text=selection_state,
+                    client=client,
+                    model=OPENAI_MODEL,
+                    fallback_model=OPENAI_FALLBACK_MODEL,
+                    lint_feedback=_single_lint_feedback,
+                )
+                cleaned_code = clean_generated_code(raw_code)
+                mode_used = "new_pipeline"
+            except Exception as exc:
+                return jsonify({
+                    "status": "error",
+                    "error": f"Code generation failed: {exc}",
+                    "retry_context": {
+                        "stage": "code_generation",
+                        "prompt": user_prompt,
+                        "recommended_action": (
+                            "Check OPENAI_MODEL is set to a valid model (e.g. gpt-5.4 or gpt-4o) "
+                            "or retry with a simpler prompt."
+                        ),
+                    },
+                }), 400
+            _single_lint_issues = find_api_issues(cleaned_code)
+            if not _single_lint_issues:
+                break
+            print(f"  [lint-retry {_attempt+1}/{_MAX_LINT_RETRIES}] single-op: {_single_lint_issues}")
+            _single_lint_feedback = _single_lint_issues
+        if _single_lint_issues:
             return jsonify({
                 "status": "error",
-                "error": f"Code generation failed: {exc}",
+                "error": f"Generated script still had API issues after {_MAX_LINT_RETRIES} retries.",
+                "details": _single_lint_issues,
                 "retry_context": {
-                    "stage": "code_generation",
+                    "stage": "preflight_api_lint",
+                    "issues": _single_lint_issues,
                     "prompt": user_prompt,
-                    "recommended_action": (
-                        "Check OPENAI_MODEL is set to a valid model (e.g. gpt-5.4 or gpt-4o) "
-                        "or retry with a simpler prompt."
-                    ),
+                    "recommended_action": "Rephrase the operation to avoid these API patterns.",
                 },
             }), 400
     else:
