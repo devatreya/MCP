@@ -719,7 +719,7 @@ sketches = rootComp.sketches
         "    except Exception as e:\n"
         "        failed_step = _mcp_ctx.get('step', 'unknown')\n"
         "        enriched_error = '[STEP:{}] {}'.format(failed_step, str(e))\n"
-        "        if ui:\n"
+        "        if ui and 'SELECTION_REQUIRED' not in str(e):\n"
         "            ui.messageBox('❌ Runtime Error: {}'.format(enriched_error))\n"
         "        raise RuntimeError(enriched_error) from e\n"
     )
