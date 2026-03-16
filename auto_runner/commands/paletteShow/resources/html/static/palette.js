@@ -161,8 +161,6 @@ function waitForStepContinue() {
     });
 }
 
-const MAX_SELECTION_RETRIES = 3;  // max times user can re-try a selection before hard fail
-
 async function runStepPipeline(steps) {
     addMessage("assistant", `Running ${steps.length} steps…`);
 
@@ -181,60 +179,51 @@ async function runStepPipeline(steps) {
         setBusy(true, `Step ${i + 1}/${steps.length}`);
         addMessage("assistant", `⏳ ${label}`);
 
-        // Execute with retry loop — if the step fails due to wrong/missing selection,
-        // re-prompt the user instead of hard-failing
         let result;
-        let selectionAttempts = 0;
+        try {
+            result = await sendToFusion("executeStep", {
+                script: step.script,
+                step_id: step.step_id,
+            });
+        } catch (err) {
+            addMessage("error", `Step crashed: ${err}`);
+            setBusy(false, "Error");
+            return;
+        }
 
-        while (true) {
-            try {
-                result = await sendToFusion("executeStep", {
-                    script: step.script,
-                    step_id: step.step_id,
-                });
-            } catch (err) {
-                addMessage("error", `Step crashed: ${err}`);
-                setBusy(false, "Error");
-                return;
-            }
-
-            if (result.ok) {
-                break;  // success — move to next step
-            }
-
+        if (!result.ok) {
             const errMsg = result.error || "Step failed.";
 
-            // Only retry selection for steps that were DESIGNED to read user
-            // selections (requires_selection=true).  For steps where the script
-            // does its own geometry search (requires_selection=false), re-running
-            // the same script won't help — the user's selection is never read.
-            const isSelectionRetriable = step.requires_selection && (
-                result.needs_selection ||
-                errMsg.includes("not a plane") ||
-                errMsg.includes("not a face") ||
-                errMsg.includes("No selection") ||
-                errMsg.includes("Could not find") ||
-                errMsg.includes("not found") ||
-                errMsg.includes("is not valid") ||
-                errMsg.includes("Cast failed") ||
-                errMsg.includes("NoneType")
-            );
-
-            if (isSelectionRetriable && selectionAttempts < MAX_SELECTION_RETRIES) {
-                selectionAttempts++;
-                const selPrompt = result.selection_prompt ||
-                    step.selection_prompt ||
-                    "The previous selection didn't work. Please select the correct geometry in Fusion 360, then click Continue.";
-                const retryMsg = selectionAttempts === 1
-                    ? `⚠️ ${label} — selection needed`
-                    : `⚠️ ${label} — wrong selection, please try again (attempt ${selectionAttempts}/${MAX_SELECTION_RETRIES})`;
-                addMessage("error", retryMsg);
-                setBusy(true, `Step ${i + 1} — Re-select`);
-                addSelectionPrompt(step.step_id + `_retry${selectionAttempts}`, selPrompt);
+            // SELECTION_REQUIRED: geometry couldn't be found — pause and ask user to select,
+            // then re-execute the same step with their selection now active.
+            if (result.needs_selection) {
+                const selPrompt = result.selection_prompt || "Could not find the required geometry automatically. Select it in Fusion 360, then click Continue.";
+                addMessage("error", `⚠️ ${label} — selection needed`);
+                setBusy(true, `Step ${i + 1} — Select`);
+                addSelectionPrompt(step.step_id + "_fallback", selPrompt);
                 await waitForStepContinue();
+                // Re-run the same step now that the user has made a selection
                 setBusy(true, `Step ${i + 1}/${steps.length}`);
                 addMessage("assistant", `⏳ Retrying ${label}`);
-                continue;  // retry the same step
+                try {
+                    result = await sendToFusion("executeStep", {
+                        script: step.script,
+                        step_id: step.step_id,
+                    });
+                } catch (err) {
+                    addMessage("error", `Step retry crashed: ${err}`);
+                    setBusy(false, "Error");
+                    return;
+                }
+                if (!result.ok) {
+                    addMessage("error", `✗ ${label} (retry failed)`);
+                    addMessage("error", result.error || "Step failed after selection.");
+                    setBusy(false, "Error");
+                    return;
+                }
+                addMessage("assistant", `✓ ${label}`);
+                updateContextUI(result);
+                continue;
             }
 
             // Non-critical failures (no meaningful shape change) — skip and continue
@@ -246,7 +235,7 @@ async function runStepPipeline(steps) {
             addMessage("error", `✗ ${label}`);
             if (isSkippable) {
                 addMessage("error", `⚠️ Skipped: ${errMsg.split("\n")[0]}`);
-                break;  // skip this step, continue pipeline
+                // Continue to next step
             } else {
                 addMessage("error", errMsg);
                 const retryText = formatRetryContext(result.retry_context);
@@ -255,14 +244,13 @@ async function runStepPipeline(steps) {
                 setBusy(false, "Error");
                 return;
             }
-        }
-
-        if (result.ok) {
+        } else {
             addMessage("assistant", `✓ ${label}`);
             updateContextUI(result);
         }
     }
 
+    const failCount = 0; // placeholder for future tracking
     addMessage("assistant", `All ${steps.length} steps completed.`);
     setBusy(false, "Ready");
 }

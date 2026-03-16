@@ -1,7 +1,6 @@
 """Step planner: decomposes a composite CAD intent into an ordered sequence of single-family steps."""
 
 import json
-import re
 from dataclasses import dataclass, field
 from typing import List
 
@@ -83,11 +82,6 @@ requires_selection rules (determines whether the add-in pauses for user input):
   identify edges programmatically using feature history or geometric filtering.
   Only set true if truly ambiguous or user says "select the edges".
   selection_prompt: "Select the edges to fillet"
-  IMPORTANT for fillet descriptions: describe edges by GEOMETRY TYPE and POSITION only.
-  NEVER mention face normals in fillet descriptions.
-  GOOD: "fillet the bottom outer circular edges (Circle3D edges at min Z)"
-  GOOD: "fillet the inner edges of the slot (edges from the most recent extrude-cut feature)"
-  BAD:  "fillet edges near the bottom face (normal.z < -0.9)" ← causes face-search code
 - "extrude" / "revolve" / "sweep" creating from scratch: false — code sketches on XY plane.
 - "extrude" as a cut on a specific face: false if face is named ("front face", "side face").
   The code should use construction planes or face normals to find the right face.
@@ -109,15 +103,11 @@ FRONT / BACK / SIDE faces — ONLY for flat-faced bodies (boxes, prisms):
   If the body is a CYLINDER, cone, or sphere: there is NO flat front/side face.
   DO NOT write "front face (face with Y-normal...)" for curved bodies.
 
-CURVED body side operations — map direction to construction plane:
-  When the prompt names a direction (front, back, left, right), use the coordinate
-  mapping above to specify the construction plane DIRECTLY in the description.
-  requires_selection: false — the code uses rootComp.xZConstructionPlane etc.
-  Examples for curved bodies:
-  - "front face" → "sketch on rootComp.xZConstructionPlane (XZ plane, front)"
-  - "right face" → "sketch on rootComp.yZConstructionPlane (YZ plane, right)"
-  - "back face"  → "sketch on rootComp.xZConstructionPlane (XZ plane, back)"
-  ONLY set requires_selection: true if NO direction is given (e.g. "cut a slot on the side").
+CURVED body side operations — ALWAYS requires_selection: true:
+  For any cut/sketch on the side of a curved body, set requires_selection: true.
+  The step description must say: "sketch on the user-selected plane"
+  selection_prompt: "Select the plane to sketch on — click the Front (XZ), Right (YZ),
+  or Top (XY) construction plane in the browser, then click Continue."
 
 PATTERN axis — never derive from a face:
   - "Create a circular pattern using rootComp.zConstructionAxis" (for Z-extruded bodies)
@@ -132,12 +122,10 @@ CRITICAL — Fusion 360 coordinate system (ViewCube mapping, always fixed):
 
 CRITICAL — working with curved bodies (cylinders, spheres, etc.):
 - Cylinders do NOT have flat "front", "right", or "side" faces — only curved surfaces.
-- When the user names a direction, map it to a construction plane and set requires_selection: false:
-  "front face" → describe as "sketch on rootComp.xZConstructionPlane (front/XZ plane)"
-  "right face" → describe as "sketch on rootComp.yZConstructionPlane (right/YZ plane)"
-  The code generator will use that construction plane directly — no selection needed.
-- ONLY set requires_selection: true if no direction is given (e.g. "cut on the side").
-  selection_prompt: "Select the plane to sketch on — click a construction plane, then Continue."
+- For any sketch cut on a curved body's side, set requires_selection: true and ask the user
+  to select the sketch plane. This is more accurate than guessing the construction plane.
+  selection_prompt: "Select the plane to sketch on — click the Front, Right, or Top
+  construction plane in the browser panel or click a flat face in the 3D canvas."
 - The BOTTOM and TOP flat faces of a cylinder ARE flat and DO NOT need plane selection.
   Use requires_selection: false and describe the face by normal:
   "bottom flat face (normal.z < -0.9)" / "top flat face (normal.z > 0.9)"
@@ -172,155 +160,6 @@ def _extract_json(text: str):
     if start >= 0 and end > start:
         return text[start : end + 1]
     return None
-
-
-# ── Deterministic post-processing ─────────────────────────────────────────
-# The LLM can't reliably detect curved bodies from model state text alone.
-# This post-processor catches "front/side/back/left/right face" operations
-# that would fail on curved bodies and rewrites them to use the correct
-# construction plane directly — no user selection needed.
-
-# Pattern matches "front face", "side face", "right face", etc. in step descriptions
-_SIDE_FACE_PATTERN = re.compile(
-    r"\b(front|back|left|right|side)\s+(face|surface)\b", re.IGNORECASE
-)
-
-# Direction word → construction plane code + friendly label
-_DIRECTION_TO_PLANE = {
-    "front": ("rootComp.xZConstructionPlane", "XZ plane, front"),
-    "back":  ("rootComp.xZConstructionPlane", "XZ plane, back"),
-    "right": ("rootComp.yZConstructionPlane", "YZ plane, right"),
-    "left":  ("rootComp.yZConstructionPlane", "YZ plane, left"),
-    "side":  ("rootComp.xZConstructionPlane", "XZ plane, front"),  # default "side" to front
-}
-
-# Families where a side-face reference means "sketch on that face" or "cut through it"
-# NOTE: fillet_chamfer is intentionally EXCLUDED — fillets need edges, not planes.
-_SIDE_FACE_FAMILIES = {"extrude", "sketch", "revolve", "sweep", "hole"}
-
-_AMBIGUOUS_SELECTION_PROMPT = (
-    "Select the plane to sketch on — click the Front (XZ), Right (YZ), "
-    "or Top (XY) construction plane in the browser panel, then click Continue."
-)
-
-
-def _has_curved_body(fusion_state_text: str) -> bool:
-    """Heuristic: detect if the model likely contains a curved body (cylinder, cone, sphere).
-
-    Checks for low face counts, equal X/Y bbox dims, or keywords in the state text.
-    A box has 6 faces; a cylinder has 3 (top, bottom, curved side).
-    """
-    if not fusion_state_text:
-        return False
-    text_lower = fusion_state_text.lower()
-    # Explicit indicators
-    if any(kw in text_lower for kw in ("cylinder", "cone", "sphere", "torus", "curved")):
-        return True
-    # Heuristic: if any body has ≤ 3 faces, it's likely curved
-    face_counts = re.findall(r"(?:faces|face_count['\"]?\s*[:=])\s*(\d+)", fusion_state_text)
-    for fc in face_counts:
-        if int(fc) <= 3:
-            return True
-    # Equal X and Y bounding box dimensions → circular cross-section (cylinder)
-    size_matches = re.findall(r"size\s+([\d.]+)x([\d.]+)x([\d.]+)", fusion_state_text)
-    for sx, sy, sz in size_matches:
-        x, y = float(sx), float(sy)
-        if x > 0 and y > 0 and abs(x - y) < 0.01:
-            return True
-    return False
-
-
-# Patterns that indicate the user or LLM already specified an explicit plane
-_EXPLICIT_PLANE_PATTERN = re.compile(
-    r"\b(x[yz]|y[xz]|z[xy])\s*(plane|construction\s*plane)\b"
-    r"|rootComp\.\w+ConstructionPlane\b"
-    r"|\bconstruction\s*plane\b",
-    re.IGNORECASE,
-)
-
-# Map user-specified plane names to rootComp properties
-_USER_PLANE_TO_CODE = {
-    "xy": ("rootComp.xYConstructionPlane", "XY plane"),
-    "xz": ("rootComp.xZConstructionPlane", "XZ plane"),
-    "yz": ("rootComp.yZConstructionPlane", "YZ plane"),
-    "yx": ("rootComp.xYConstructionPlane", "XY plane"),
-    "zx": ("rootComp.xZConstructionPlane", "XZ plane"),
-    "zy": ("rootComp.yZConstructionPlane", "YZ plane"),
-}
-
-
-def _postprocess_steps(
-    steps: List["StepPlan"], fusion_state_text: str, user_intent: str = "",
-) -> List["StepPlan"]:
-    """Deterministic override for curved bodies: rewrite side-face references to
-    use named construction planes directly, avoiding broken face-normal searches.
-
-    Priority:
-    1. If the user's prompt or step description already names a specific plane
-       (e.g. "on the YZ plane"), honour that — use the named plane directly.
-    2. If a direction is named (front/back/left/right), map it to the correct
-       construction plane via the ViewCube mapping.
-    3. If neither direction nor plane is given, ask the user to select.
-    """
-    if not _has_curved_body(fusion_state_text):
-        return steps  # box/prism — LLM's face-finding approach is fine
-
-    # Check if user explicitly named a plane in their prompt
-    user_plane_match = re.search(
-        r"\b(x[yz]|y[xz]|z[xy])\s*(?:plane|construction\s*plane)?\b", user_intent, re.IGNORECASE
-    ) if user_intent else None
-    user_specified_plane = None
-    if user_plane_match:
-        plane_key = user_plane_match.group(1).lower()
-        # Normalise: sort the two letters so "zx" → "xz"
-        plane_key = "".join(sorted(plane_key))
-        user_specified_plane = _USER_PLANE_TO_CODE.get(plane_key)
-
-    for step in steps:
-        if step.family not in _SIDE_FACE_FAMILIES:
-            continue
-
-        # 1. If the step description already has an explicit plane reference,
-        #    don't override — the LLM already got it right
-        if _EXPLICIT_PLANE_PATTERN.search(step.description):
-            step.requires_selection = False
-            step.selection_prompt = ""
-            continue
-
-        match = _SIDE_FACE_PATTERN.search(step.description)
-        if not match:
-            continue
-
-        # 2. If the user specified a plane in their prompt, honour it
-        if user_specified_plane:
-            plane_code, plane_label = user_specified_plane
-            step.description = _SIDE_FACE_PATTERN.sub(
-                f"{plane_code} ({plane_label})", step.description
-            )
-            step.requires_selection = False
-            step.selection_prompt = ""
-            continue
-
-        # 3. Map the direction word to a construction plane
-        direction = match.group(1).lower()
-        plane_info = _DIRECTION_TO_PLANE.get(direction)
-
-        if plane_info:
-            plane_code, plane_label = plane_info
-            step.description = _SIDE_FACE_PATTERN.sub(
-                f"{plane_code} ({plane_label})", step.description
-            )
-            step.requires_selection = False
-            step.selection_prompt = ""
-        else:
-            # No direction, no user plane — ask user to select
-            step.requires_selection = True
-            step.selection_prompt = _AMBIGUOUS_SELECTION_PROMPT
-            step.description = _SIDE_FACE_PATTERN.sub(
-                "user-selected construction plane", step.description
-            )
-
-    return steps
 
 
 def plan_steps(
@@ -379,8 +218,5 @@ def plan_steps(
                 selection_prompt=str(raw_step.get("selection_prompt") or "").strip(),
             )
         )
-
-    # Deterministic post-processing: override side-face operations on curved bodies
-    steps = _postprocess_steps(steps, fusion_state_text, user_intent=human_intent)
 
     return steps
