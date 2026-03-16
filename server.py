@@ -1012,6 +1012,14 @@ def summarize_fusion_state(state):
             f"center {center[0]:.2f},{center[1]:.2f},{center[2]:.2f} cm, "
             f"faces {faces}"
         )
+
+    # Include origin construction planes so LLM knows they're available
+    origin_planes = state.get("origin_planes", [])
+    if origin_planes:
+        lines.append("Origin planes:")
+        for p in origin_planes:
+            lines.append(f"  - {p['name']} → {p['code']} ({p['label']})")
+
     return "\n".join(lines)
 
 def summarize_selection_context(selection):
@@ -1050,6 +1058,15 @@ def summarize_selection_context(selection):
             lines.append(
                 f"- [{index}] vertex at {point.get('x', 0):.2f},{point.get('y', 0):.2f},{point.get('z', 0):.2f}"
             )
+        elif kind == "constructionplane":
+            plane_name = item.get("plane_name") or item.get("name", "unknown plane")
+            lines.append(
+                f"- [{index}] construction plane '{plane_name}' "
+                f"(use: sketches.add(entity) where entity = ui.activeSelections.item({index}).entity)"
+            )
+        elif kind == "constructionaxis":
+            axis_name = item.get("axis_name") or item.get("name", "unknown axis")
+            lines.append(f"- [{index}] construction axis '{axis_name}'")
         else:
             lines.append(f"- [{index}] {kind}")
 
