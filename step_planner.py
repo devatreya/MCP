@@ -92,10 +92,19 @@ requires_selection rules (determines whether the add-in pauses for user input):
 
 CRITICAL — finding faces programmatically:
 When requires_selection is false, the step description MUST include enough detail for code
-to locate the geometry. Examples:
+to locate the geometry. Use these exact phrasings:
+
+For FLAT-FACED bodies (boxes, prisms):
   - "Shell the body to 0.2 cm wall by removing the top face (face with highest Z centroid and upward normal)"
-  - "Cut a slot on the front face (face with Y-normal closest to +Y direction)"
-  - "Drill holes through the bottom face (face with lowest Z centroid and downward normal)"
+  - "Cut a slot on the front flat face (face with highest Y centroid and normal.y > 0.9)"
+  - "Drill holes through the bottom flat face (face with lowest Z centroid and normal.z < -0.9)"
+
+For CURVED bodies (cylinders, cones, spheres) — ALWAYS use construction planes:
+  - "Cut a slot on the front of the cylinder by sketching on the XZ construction plane (rootComp.xZConstructionPlane)"
+  - "Drill holes through the bottom flat face of the cylinder (find face with normal.z < -0.9 — the bottom cap IS flat)"
+  - "Create a pattern about the cylinder axis using rootComp.zConstructionAxis"
+
+NEVER write "face with Y-normal closest to +Y direction" for a cylinder — cylinders have no flat side faces.
 
 CRITICAL — Fusion 360 coordinate system (ViewCube mapping, always fixed):
   "front"  → XZ construction plane  (rootComp.xZConstructionPlane)
