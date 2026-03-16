@@ -97,13 +97,22 @@ to locate the geometry. Examples:
   - "Cut a slot on the front face (face with Y-normal closest to +Y direction)"
   - "Drill holes through the bottom face (face with lowest Z centroid and downward normal)"
 
+CRITICAL — Fusion 360 coordinate system (ViewCube mapping, always fixed):
+  "front"  → XZ construction plane  (rootComp.xZConstructionPlane)
+  "back"   → XZ construction plane
+  "right"  → YZ construction plane  (rootComp.yZConstructionPlane)
+  "left"   → YZ construction plane
+  "top"    → XY construction plane  (rootComp.xYConstructionPlane)
+  "bottom" → XY construction plane
+
 CRITICAL — working with curved bodies (cylinders, spheres, etc.):
-- Cylinders do NOT have flat "front" or "side" faces — they have curved surfaces.
-- To create a sketch cut on a curved body, use a CONSTRUCTION PLANE (e.g. XZ plane for
-  "front", YZ plane for "side") and sketch there, then cut-extrude through the body.
-- The step description MUST mention using a construction plane when the target body is
-  curved. Example: "Create a rectangular slot on the front of the cylinder by sketching
-  on the XZ construction plane and cutting through the body."
+- Cylinders do NOT have flat "front", "right", or "side" faces — only curved surfaces.
+- ALWAYS use a construction plane for sketching cuts on curved bodies.
+- The step description MUST name the construction plane explicitly, not "the front face".
+  Bad:  "Cut a slot on the front face of the cylinder"
+  Good: "Cut a slot on the front of the cylinder by sketching on the XZ construction plane"
+- The BOTTOM and TOP flat faces of a cylinder ARE flat and can be found by face normals.
+  Use "bottom flat face (normal.z < -0.9)" and "top flat face (normal.z > 0.9)" in descriptions.
 
 selection_prompt: a clear, friendly instruction shown to the user in the chat panel.
   Set to "" when requires_selection is false.

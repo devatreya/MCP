@@ -44,24 +44,30 @@ CUT DIRECTION ROBUSTNESS (for any cut/hole operation):
 - Try adsk.fusion.ExtentDirections.NegativeExtentDirection first
 - If volume unchanged after add(), delete the feature and retry PositiveExtentDirection
 
-FINDING FACES PROGRAMMATICALLY (when no user selection):
-- Top face: face with centroid at max Z and normal.z > 0.9
-- Bottom face: face with centroid at min Z and normal.z < -0.9
-- Front face: planar face with normal.y > 0.9 (or closest to +Y)
-- Back face: planar face with normal.y < -0.9
-- Use hasattr(face.geometry, 'normal') to filter only planar faces.
-- For curved bodies (cylinders, spheres), there are NO flat front/side faces.
+FUSION 360 COORDINATE SYSTEM — ViewCube mapping (ALWAYS use these):
+  "Front"  face / view  →  XZ plane  →  rootComp.xZConstructionPlane   (normal = +Y)
+  "Back"   face / view  →  XZ plane  →  rootComp.xZConstructionPlane   (normal = -Y)
+  "Right"  face / view  →  YZ plane  →  rootComp.yZConstructionPlane   (normal = +X)
+  "Left"   face / view  →  YZ plane  →  rootComp.yZConstructionPlane   (normal = -X)
+  "Top"    face / view  →  XY plane  →  rootComp.xYConstructionPlane   (normal = +Z)
+  "Bottom" face / view  →  XY plane  →  rootComp.xYConstructionPlane   (normal = -Z)
+These mappings are FIXED in every Fusion 360 file — never query the camera.
 
-CURVED BODY OPERATIONS (cylinders, cones, spheres):
-- These bodies have curved surfaces, NOT flat front/side faces.
-- To sketch on a curved body's "front" or "side", use a CONSTRUCTION PLANE:
-  `xzPlane = rootComp.xZConstructionPlane`  # "front" plane
-  `yzPlane = rootComp.yZConstructionPlane`  # "side" plane
-  `xyPlane = rootComp.xYConstructionPlane`  # "top/bottom" plane
-  Then: `sketch = sketches.add(xzPlane)`
-- For cuts through curved bodies: sketch on the construction plane, then
-  use CutFeatureOperation with appropriate extent direction.
-- The flat top/bottom faces of a cylinder ARE accessible via face normals.
+FINDING FACES PROGRAMMATICALLY (flat-faced bodies like boxes only):
+- Top face:    flat face with normal.z > 0.9  AND  centroid at max Z
+- Bottom face: flat face with normal.z < -0.9 AND  centroid at min Z
+- Front face:  flat face with normal.y > 0.9  AND  centroid at max Y
+- Use hasattr(face.geometry, 'normal') to test if a face is planar before reading normal.
+- FALLBACK: if face-finding returns None, raise:
+  raise Exception("SELECTION_REQUIRED: Could not find [face description]. Please select it.")
+
+CURVED BODY OPERATIONS (cylinders, cones, spheres — NO flat side faces exist):
+- NEVER search for a "front face" on a cylinder — use the construction plane directly.
+- Slot / cutout on "front" of cylinder  →  sketch = sketches.add(rootComp.xZConstructionPlane)
+- Slot / cutout on "right" of cylinder  →  sketch = sketches.add(rootComp.yZConstructionPlane)
+- Holes through "bottom" of cylinder    →  find bottom flat face by normal.z < -0.9 (it IS flat)
+- Holes through "top" of cylinder       →  find top flat face by normal.z > 0.9 (it IS flat)
+- For cut-extrudes on construction planes: use SymmetricExtentDefinition or try both directions.
 """
 
 _SYSTEM_PROMPT_SUFFIX = """\
