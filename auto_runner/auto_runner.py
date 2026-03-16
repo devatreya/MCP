@@ -204,9 +204,20 @@ def _handle_execute_step(script, step_id):
 
     result = _runtime.execute_wrapped_script(script)
     if not result.get("ok"):
+        error_msg = result.get("error", "Step execution failed.")
+        # Detect the SELECTION_REQUIRED sentinel raised by generated code
+        # when it cannot find geometry programmatically.
+        needs_selection = "SELECTION_REQUIRED:" in error_msg
+        selection_prompt = ""
+        if needs_selection:
+            # Extract the human-readable part after the sentinel prefix
+            parts = error_msg.split("SELECTION_REQUIRED:", 1)
+            selection_prompt = parts[1].strip() if len(parts) > 1 else "Select the required geometry in Fusion 360, then click Continue."
         return {
             "ok": False,
-            "error": result.get("error", "Step execution failed."),
+            "error": error_msg,
+            "needs_selection": needs_selection,
+            "selection_prompt": selection_prompt,
             "traceback": result.get("traceback", ""),
             "script_file": saved,
             "retry_context": result.get("retry_context"),

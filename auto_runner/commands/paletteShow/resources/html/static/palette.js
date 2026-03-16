@@ -193,13 +193,44 @@ async function runStepPipeline(steps) {
 
         if (!result.ok) {
             const errMsg = result.error || "Step failed.";
-            // Check if this is a non-critical failure we can skip
+
+            // SELECTION_REQUIRED: geometry couldn't be found — pause and ask user to select,
+            // then re-execute the same step with their selection now active.
+            if (result.needs_selection) {
+                const selPrompt = result.selection_prompt || "Could not find the required geometry automatically. Select it in Fusion 360, then click Continue.";
+                addMessage("error", `⚠️ ${label} — selection needed`);
+                setBusy(true, `Step ${i + 1} — Select`);
+                addSelectionPrompt(step.step_id + "_fallback", selPrompt);
+                await waitForStepContinue();
+                // Re-run the same step now that the user has made a selection
+                setBusy(true, `Step ${i + 1}/${steps.length}`);
+                addMessage("assistant", `⏳ Retrying ${label}`);
+                try {
+                    result = await sendToFusion("executeStep", {
+                        script: step.script,
+                        step_id: step.step_id,
+                    });
+                } catch (err) {
+                    addMessage("error", `Step retry crashed: ${err}`);
+                    setBusy(false, "Error");
+                    return;
+                }
+                if (!result.ok) {
+                    addMessage("error", `✗ ${label} (retry failed)`);
+                    addMessage("error", result.error || "Step failed after selection.");
+                    setBusy(false, "Error");
+                    return;
+                }
+                addMessage("assistant", `✓ ${label}`);
+                updateContextUI(result);
+                continue;
+            }
+
+            // Non-critical failures (no meaningful shape change) — skip and continue
             const isSkippable = (
                 errMsg.includes("no meaningful shape change") ||
                 errMsg.includes("ASM_RBI_NO_LUMP_LEFT") ||
-                errMsg.includes("does not cause a meaningful shape change") ||
-                errMsg.includes("already") ||
-                errMsg.includes("redundant")
+                errMsg.includes("does not cause a meaningful shape change")
             );
             addMessage("error", `✗ ${label}`);
             if (isSkippable) {
