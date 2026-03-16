@@ -83,6 +83,11 @@ requires_selection rules (determines whether the add-in pauses for user input):
   identify edges programmatically using feature history or geometric filtering.
   Only set true if truly ambiguous or user says "select the edges".
   selection_prompt: "Select the edges to fillet"
+  IMPORTANT for fillet descriptions: describe edges by GEOMETRY TYPE and POSITION only.
+  NEVER mention face normals in fillet descriptions.
+  GOOD: "fillet the bottom outer circular edges (Circle3D edges at min Z)"
+  GOOD: "fillet the inner edges of the slot (edges from the most recent extrude-cut feature)"
+  BAD:  "fillet edges near the bottom face (normal.z < -0.9)" ← causes face-search code
 - "extrude" / "revolve" / "sweep" creating from scratch: false — code sketches on XY plane.
 - "extrude" as a cut on a specific face: false if face is named ("front face", "side face").
   The code should use construction planes or face normals to find the right face.
@@ -175,7 +180,8 @@ _SIDE_FACE_PATTERN = re.compile(
 )
 
 # Families where a side-face reference means "sketch on that face" or "cut through it"
-_SIDE_FACE_FAMILIES = {"extrude", "sketch", "revolve", "sweep", "hole", "fillet_chamfer"}
+# NOTE: fillet_chamfer is intentionally EXCLUDED — fillets need edges, not planes.
+_SIDE_FACE_FAMILIES = {"extrude", "sketch", "revolve", "sweep", "hole"}
 
 _PLANE_SELECTION_PROMPT = (
     "Select the plane to sketch on — click the Front (XZ), Right (YZ), "

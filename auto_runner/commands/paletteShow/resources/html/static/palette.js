@@ -204,23 +204,23 @@ async function runStepPipeline(steps) {
 
             const errMsg = result.error || "Step failed.";
 
-            // SELECTION_REQUIRED or step had requires_selection and failed:
-            // Prompt user to (re-)select and retry
-            const isSelectionIssue = (
+            // Only retry selection for steps that were DESIGNED to read user
+            // selections (requires_selection=true).  For steps where the script
+            // does its own geometry search (requires_selection=false), re-running
+            // the same script won't help — the user's selection is never read.
+            const isSelectionRetriable = step.requires_selection && (
                 result.needs_selection ||
-                (step.requires_selection && (
-                    errMsg.includes("not a plane") ||
-                    errMsg.includes("not a face") ||
-                    errMsg.includes("No selection") ||
-                    errMsg.includes("Could not find") ||
-                    errMsg.includes("not found") ||
-                    errMsg.includes("is not valid") ||
-                    errMsg.includes("Cast failed") ||
-                    errMsg.includes("NoneType")
-                ))
+                errMsg.includes("not a plane") ||
+                errMsg.includes("not a face") ||
+                errMsg.includes("No selection") ||
+                errMsg.includes("Could not find") ||
+                errMsg.includes("not found") ||
+                errMsg.includes("is not valid") ||
+                errMsg.includes("Cast failed") ||
+                errMsg.includes("NoneType")
             );
 
-            if (isSelectionIssue && selectionAttempts < MAX_SELECTION_RETRIES) {
+            if (isSelectionRetriable && selectionAttempts < MAX_SELECTION_RETRIES) {
                 selectionAttempts++;
                 const selPrompt = result.selection_prompt ||
                     step.selection_prompt ||
