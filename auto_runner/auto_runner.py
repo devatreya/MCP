@@ -45,6 +45,8 @@ try:
 except Exception:
     _import_errors.append(f"fusionAddInUtils import failed: {traceback.format_exc()}")
 
+from auto_runner import ws_bridge
+
 for err in _import_errors:
     _bootstrap_log(err)
 
@@ -452,6 +454,12 @@ def run(context):
             _runtime.capture_and_store_current_context()
         _log("Add-in started")
         _execute_command_by_id(CMD_ID)
+
+        # Start MCP WebSocket bridge
+        try:
+            ws_bridge.start_bridge(app, ui)
+        except Exception as e:
+            _log(f"[bridge] Failed to start: {e}")
     except Exception:
         _log_error("Add-in startup failed")
         if ui:
@@ -466,6 +474,12 @@ def stop(context):
         _log("Add-in stopped")
     except Exception:
         _log_error("Add-in stop failed")
+
+    # Stop MCP WebSocket bridge
+    try:
+        ws_bridge.stop_bridge()
+    except Exception:
+        pass
 
     global _handlers
     _handlers = []
