@@ -69,8 +69,24 @@ FINDING FACES PROGRAMMATICALLY (flat-faced bodies like boxes only):
 - Bottom face: flat face with normal.z < -0.9 AND  centroid at min Z
 - Front face:  flat face with normal.y > 0.9  AND  centroid at max Y
 - Use hasattr(face.geometry, 'normal') to test if a face is planar before reading normal.
-- FALLBACK: if face-finding returns None, raise:
-  raise Exception("SELECTION_REQUIRED: Could not find [face description]. Please select it.")
+- MANDATORY FALLBACK PATTERN — always use this structure when searching for any face:
+    target_face = None
+    for face in body.faces:
+        if hasattr(face.geometry, 'normal') and face.geometry.normal.y > 0.9:
+            target_face = face; break
+    # If not found programmatically, try the user's active selection (works on retry)
+    if target_face is None and ui.activeSelections.count > 0:
+        entity = ui.activeSelections.item(0).entity
+        target_face = adsk.fusion.BRepFace.cast(entity)
+        if not target_face:
+            # User may have selected a construction plane — use it as sketch plane directly
+            sketchPlane = adsk.fusion.ConstructionPlane.cast(entity)
+            if sketchPlane:
+                sketch = sketches.add(sketchPlane)
+                # ... draw the profile here and continue, do NOT use target_face below
+    if target_face is None:
+        raise Exception("SELECTION_REQUIRED: Could not find [face]. Please select it.")
+  This pattern means retries always succeed if the user selected the right geometry.
 
 CURVED BODY OPERATIONS (cylinders, cones, spheres — NO flat side faces exist):
 - NEVER search for a "front face" on a cylinder — use the construction plane directly.

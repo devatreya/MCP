@@ -108,10 +108,14 @@ FRONT / BACK / SIDE faces — ONLY for flat-faced bodies (boxes, prisms):
   DO NOT write "front face (face with Y-normal...)" for curved bodies.
 
 CURVED body side operations — ALWAYS requires_selection: true:
-  For any cut/sketch on the side of a curved body, set requires_selection: true.
+  If the Current Fusion model state shows a CURVED BODY (keyword "CURVED BODY" in the state),
+  ANY sketch or cut on the SIDE of that body MUST have requires_selection: true.
+  RULE: If the model state lists flat face normals but NONE of them are Y-axis or X-axis normals
+  (i.e. no (x,y,z) where |y|>0.9 or |x|>0.9), then there is NO usable front/back/side face.
+  In that case, ALWAYS set requires_selection: true for any front/side/back operation.
   The step description must say: "sketch on the user-selected plane"
   selection_prompt: "Select the plane to sketch on — click the Front (XZ), Right (YZ),
-  or Top (XY) construction plane in the browser, then click Continue."
+  or Top (XY) construction plane in the Origin folder in the browser, then click Continue."
 
 PATTERN axis — never derive from a face:
   - "Create a circular pattern using rootComp.zConstructionAxis" (for Z-extruded bodies)
