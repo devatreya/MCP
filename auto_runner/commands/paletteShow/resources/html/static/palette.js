@@ -362,7 +362,25 @@ window.fusionJavaScriptHandler = {
     },
 };
 
-refreshContext();
+// On startup, adsk.fusionSendData is injected asynchronously by Fusion after
+// the WebView finishes loading. Calling refreshContext() immediately fails with
+// "Fusion bridge is not ready" because adsk doesn't exist yet. Poll until it
+// is available, then do the first refresh silently.
+(async function initialRefresh() {
+    const MAX_ATTEMPTS = 20;
+    const DELAY_MS = 250;
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+        if (window.adsk && typeof adsk.fusionSendData === "function") {
+            await refreshContext();
+            return;
+        }
+        await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+    }
+    // adsk still not ready after 5 seconds — show the panel in idle state
+    // without an error message (user can hit Refresh manually).
+    setBusy(false, "Idle");
+})();
+
 setInterval(() => {
     if (busy || refreshInFlight) {
         return;
