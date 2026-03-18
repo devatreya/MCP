@@ -744,13 +744,70 @@ def find_api_issues(code):
 # Family-based card retrieval (used by new pipeline code_generator.py)
 # ---------------------------------------------------------------------------
 
+# NOTE: curved-body-sketch card is appended to API_CARDS here so it benefits
+# from the same keyword retrieval and family mapping infrastructure.
+API_CARDS.append({
+    "id": "curved-body-sketch",
+    "keywords": [
+        "cylinder", "cylindrical", "curved", "curved body", "curved surface",
+        "front of cylinder", "side of cylinder", "slot on cylinder",
+        "rectangle slot", "cut slot", "slot cut", "front plane", "xz plane",
+        "construction plane", "no flat face", "curved face",
+    ],
+    "content": (
+        "[curved-body-sketch] Cylinders and other curved bodies have NO flat 'front', 'back', "
+        "'left', or 'right' faces. Their side surface is a curved BRepFace.\n\n"
+        "RULES FOR SKETCHING ON A CURVED BODY:\n"
+        "1. NEVER call `sketches.add(face)` on a curved (cylindrical/conical) face — it raises an error.\n"
+        "2. Instead use an origin construction plane:\n"
+        "   - 'front' / 'front face' of cylinder  →  rootComp.xZConstructionPlane  (XZ plane)\n"
+        "   - 'back'                               →  rootComp.xZConstructionPlane  (same plane, reverse extrude)\n"
+        "   - 'right' / 'right side'               →  rootComp.yZConstructionPlane  (YZ plane)\n"
+        "   - 'left'                               →  rootComp.yZConstructionPlane\n"
+        "   - 'top'                                →  rootComp.xYConstructionPlane  (XY plane)\n"
+        "   - 'bottom'                             →  rootComp.xYConstructionPlane\n\n"
+        "3. If the model state says 'CURVED BODY' and the user selected a construction plane, "
+        "use the SELECTED plane:\n"
+        "   `plane = adsk.fusion.ConstructionPlane.cast(ui.activeSelections.item(0).entity)`\n"
+        "   `sketch = sketches.add(plane)`\n\n"
+        "4. If the model state says 'CURVED BODY' and NO construction plane was selected, "
+        "map the user's direction word to an origin plane using rule #2 above — "
+        "do NOT prompt the user, just pick the correct plane programmatically.\n\n"
+        "5. After sketching the rectangle/slot on the construction plane, extrude as a CUT "
+        "in the direction that passes through the body. Use ThroughAllExtentDefinition for "
+        "clean through-cuts:\n"
+        "   `extInput.setOneSideExtent(ThroughAllExtentDefinition.create(), direction)`\n"
+        "   where direction = `adsk.fusion.ExtentDirections.NegativeExtentDirection` or Positive.\n\n"
+        "EXAMPLE — rectangle slot on front of a cylinder:\n"
+        "```python\n"
+        "sketch = sketches.add(rootComp.xZConstructionPlane)\n"
+        "lines = sketch.sketchCurves.sketchLines\n"
+        "# centre the slot on the cylinder axis (x=0, z=cylinder_centre_z)\n"
+        "p1 = adsk.core.Point3D.create(-slot_w/2, 0, cyl_z - slot_h/2)\n"
+        "p2 = adsk.core.Point3D.create( slot_w/2, 0, cyl_z + slot_h/2)\n"
+        "lines.addTwoPointRectangle(p1, p2)\n"
+        "prof = sketch.profiles.item(0)\n"
+        "extInput = extrudes.createInput(prof, adsk.fusion.FeatureOperations.CutFeatureOperation)\n"
+        "extInput.setOneSideExtent(\n"
+        "    adsk.fusion.ThroughAllExtentDefinition.create(),\n"
+        "    adsk.fusion.ExtentDirections.PositiveExtentDirection\n"
+        ")\n"
+        "extrudes.add(extInput)\n"
+        "```"
+    ),
+    "sources": [
+        "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Sketches_add.htm",
+        "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ThroughAllExtentDefinition_create.htm",
+    ],
+})
+
 _FAMILY_TO_CARD_IDS = {
-    "sketch": ["selected-face-sketch", "construction-planes", "extrude-feature-input"],
-    "extrude": ["extrude-feature-input", "through-all-cut", "selected-face-sketch"],
+    "sketch": ["selected-face-sketch", "construction-planes", "curved-body-sketch", "extrude-feature-input"],
+    "extrude": ["extrude-feature-input", "through-all-cut", "selected-face-sketch", "curved-body-sketch"],
     "revolve": ["revolve-feature", "extrude-feature-input"],
     "sweep": ["sweep-feature"],
     "fillet_chamfer": ["fillet-chamfer", "fillet-edge-sets", "chamfer-edge-sets"],
-    "hole": ["hole-features", "through-all-cut", "selected-face-sketch"],
+    "hole": ["hole-features", "through-all-cut", "selected-face-sketch", "curved-body-sketch"],
     "shell": ["shell-feature"],
     "pattern": ["pattern-linear", "pattern-circular", "pattern-holes"],
     "mirror": ["mirror-feature"],

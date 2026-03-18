@@ -142,6 +142,34 @@ def capture_model_state():
             "volume_cm3": _safe_float(getattr(body, "volume", 0.0)),
             "bbox": _bbox_dict(getattr(body, "boundingBox", None)),
         }
+
+        # Analyse face surface types so the LLM knows if a body is cylindrical.
+        # A cylinder has no flat "front" face — the agent must use a construction plane.
+        try:
+            flat_normals = []
+            curved_face_count = 0
+            for f_idx in range(body.faces.count):
+                face = body.faces.item(f_idx)
+                geom = face.geometry
+                surf_type = getattr(geom, "surfaceType", None)
+                # SurfaceTypes: 0=Plane, 1=Cylinder, 2=Cone, 3=Sphere, 4=Torus,
+                #               5=EllipticalCylinder, 6=EllipticalCone, 7=NurbsSurface
+                if surf_type == 0:  # Plane
+                    n = _face_normal(face)
+                    if n:
+                        flat_normals.append(n)
+                else:
+                    curved_face_count += 1
+            body_data["curved_face_count"] = curved_face_count
+            body_data["flat_face_normals"] = flat_normals
+            body_data["is_prismatic"] = (curved_face_count == 0)
+            body_data["has_curved_faces"] = (curved_face_count > 0)
+        except Exception:
+            body_data["curved_face_count"] = 0
+            body_data["flat_face_normals"] = []
+            body_data["is_prismatic"] = True
+            body_data["has_curved_faces"] = False
+
         bodies.append(body_data)
 
     # Capture origin construction planes so the LLM knows they're available
@@ -312,11 +340,30 @@ def summarize_model_state(state):
         bbox = body.get("bbox") or {}
         size = (bbox.get("size") or {})
         center = (bbox.get("center") or {})
+        has_curved = body.get("has_curved_faces", False)
+        curved_count = body.get("curved_face_count", 0)
+        flat_normals = body.get("flat_face_normals") or []
+
+        shape_hint = ""
+        if has_curved:
+            shape_hint = f" [CURVED BODY: {curved_count} curved face(s)"
+            if flat_normals:
+                normal_strs = [f"({n[0]:.2f},{n[1]:.2f},{n[2]:.2f})" for n in flat_normals[:4]]
+                shape_hint += f", flat faces with normals: {', '.join(normal_strs)}"
+            else:
+                shape_hint += ", NO flat faces"
+            shape_hint += " — use construction plane for sketch, NOT body face]"
+        else:
+            if flat_normals:
+                normal_strs = [f"({n[0]:.2f},{n[1]:.2f},{n[2]:.2f})" for n in flat_normals[:4]]
+                shape_hint = f" [prismatic, flat face normals: {', '.join(normal_strs)}]"
+
         lines.append(
             f"- {body.get('name', 'Body')}: "
             f"size {size.get('x', 0):.2f}x{size.get('y', 0):.2f}x{size.get('z', 0):.2f} cm, "
             f"center {center.get('x', 0):.2f},{center.get('y', 0):.2f},{center.get('z', 0):.2f} cm, "
             f"faces {body.get('face_count', 0)}"
+            f"{shape_hint}"
         )
     if len(bodies) > 8:
         lines.append(f"... {len(bodies) - 8} more bodies")

@@ -24,9 +24,12 @@ _MAX_DIM_CM = 500.0
 # operation_family → required selection kind(s).
 # Value is a list of acceptable kinds (any match passes).
 # None means no selection required.
+# "constructionplane" is always accepted alongside "face" because a construction
+# plane is a valid sketch plane for operations that would normally use a flat face
+# (e.g. cutting a slot into a cylinder using the XZ/YZ/XY origin plane).
 _FAMILY_SELECTION_RULES = {
-    "hole": ["face"],
-    "shell": ["face"],
+    "hole": ["face", "constructionplane"],
+    "shell": ["face", "constructionplane"],
     "boolean": ["body", "face"],
 }
 
@@ -43,10 +46,14 @@ def _has_selection_kind(selection_context, *kinds):
     if not isinstance(items, list):
         return False
     target_kinds = {str(k).strip().lower() for k in kinds}
-    # 'plane' is satisfied by any planar entity the user can click
+    # 'plane' and 'constructionplane' are interchangeable with 'face' for sketch-plane
+    # selection purposes — a construction plane can serve as a sketch plane.
     plane_aliases = {"constructionplane", "plane", "face"}
-    if "plane" in target_kinds:
+    if "plane" in target_kinds or "constructionplane" in target_kinds:
         target_kinds |= plane_aliases
+    # Also: if a face is required, accept construction planes too (e.g. cut on cylinder)
+    if "face" in target_kinds:
+        target_kinds.add("constructionplane")
     for item in items:
         if not isinstance(item, dict):
             continue

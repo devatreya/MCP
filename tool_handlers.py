@@ -64,6 +64,7 @@ class HandlerContext:
 # ---------------------------------------------------------------------------
 
 _MAX_LINT_RETRIES = 2
+_MAX_RUNTIME_RETRIES = 2
 
 
 def _get_state(ctx: HandlerContext) -> dict:
@@ -252,8 +253,44 @@ def _run_geometry_pipeline(
 
     wrapped = wrap_script_with_run(cleaned_code, clear_model=clear)
 
-    # Step 6: execute via bridge
+    # Step 6: execute via bridge — with runtime-error retry loop.
+    # If Fusion raises a Python exception we get the full traceback back.
+    # Feed it to generate_cad_code as lint_feedback so the LLM can fix the
+    # specific line rather than regenerating blind.
     exec_response = run_bridge_call(ctx.bridge.execute_script(wrapped))
+
+    for _runtime_attempt in range(_MAX_RUNTIME_RETRIES):
+        if exec_response.get("ok"):
+            break
+
+        runtime_error = exec_response.get("error") or "Script execution failed."
+        traceback_str = exec_response.get("data", {}).get("traceback") or ""
+        runtime_feedback = [
+            f"Runtime error from Fusion 360:\n{runtime_error}"
+            + (f"\n\nFull traceback:\n{traceback_str}" if traceback_str else "")
+        ]
+
+        try:
+            raw_code, _model_used = generate_cad_code(
+                intent_result=intent,
+                fusion_state_text=fusion_state_text,
+                selection_state_text=selection_state_text,
+                client=ctx.client,
+                model=ctx.model,
+                fallback_model=ctx.fallback_model,
+                lint_feedback=runtime_feedback,
+            )
+            cleaned_code = clean_generated_code(raw_code)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"Code generation failed during runtime-retry: {exc}",
+                "retry_context": {"stage": "code_generation_runtime_retry"},
+            }
+
+        cleaned_code = add_execution_checkpoints(cleaned_code, prompt)
+        wrapped = wrap_script_with_run(cleaned_code, clear_model=False)
+        exec_response = run_bridge_call(ctx.bridge.execute_script(wrapped))
 
     if not exec_response.get("ok"):
         return {
