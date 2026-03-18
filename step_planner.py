@@ -78,10 +78,14 @@ requires_selection rules (determines whether the add-in pauses for user input):
   code finds the face programmatically. If ambiguous, set true.
   selection_prompt: "Select the face to drill the holes into"
 - "fillet_chamfer" on ALL edges: false — code iterates all body edges.
+- "fillet_chamfer" on bottom/top edges of a cylinder: false — code uses edge geometry cast
+  (Circle3D/Arc3D) + pointOnEdge.z threshold. Description MUST say:
+  "fillet the bottom circular edge(s) — use Circle3D/Arc3D cast on body.edges, pointOnEdge.z < 0.1"
+  NOT "bottom flat face" — fillet works on EDGES, not faces. Never mention a face in a fillet step.
 - "fillet_chamfer" on specific edges (e.g. "inner edges of the slot"): false — code can
   identify edges programmatically using feature history or geometric filtering.
   Only set true if truly ambiguous or user says "select the edges".
-  selection_prompt: "Select the edges to fillet"
+  selection_prompt: "Select the edges to fillet, then click Continue."
 - "extrude" / "revolve" / "sweep" creating from scratch: false — code sketches on XY plane.
 - "extrude" as a cut on a specific face: false if face is named ("front face", "side face").
   The code should use construction planes or face normals to find the right face.

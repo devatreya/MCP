@@ -349,10 +349,10 @@ def summarize_model_state(state):
             shape_hint = f" [CURVED BODY: {curved_count} curved face(s)"
             if flat_normals:
                 normal_strs = [f"({n[0]:.2f},{n[1]:.2f},{n[2]:.2f})" for n in flat_normals[:4]]
-                shape_hint += f", flat faces with normals: {', '.join(normal_strs)}"
+                shape_hint += f", flat faces: {', '.join(normal_strs)}"
+                shape_hint += " — for SIDE sketch use construction plane; top/bottom flat faces ARE searchable by normal]"
             else:
-                shape_hint += ", NO flat faces"
-            shape_hint += " — use construction plane for sketch, NOT body face]"
+                shape_hint += ", NO flat faces — use construction plane for any sketch, do not search face normals]"
         else:
             if flat_normals:
                 normal_strs = [f"({n[0]:.2f},{n[1]:.2f},{n[2]:.2f})" for n in flat_normals[:4]]

@@ -79,6 +79,26 @@ CURVED BODY OPERATIONS (cylinders, cones, spheres — NO flat side faces exist):
 - Holes through "bottom" of cylinder    →  find bottom flat face by normal.z < -0.9 (it IS flat)
 - Holes through "top" of cylinder       →  find top flat face by normal.z > 0.9 (it IS flat)
 - For cut-extrudes on construction planes: use SymmetricExtentDefinition or try both directions.
+
+FILLET ON CYLINDER TOP/BOTTOM EDGES — CRITICAL PATTERN (use this, never face-based approach):
+Do NOT search for a face and then get its edges — use Pattern B from fillet-edge-sets directly:
+  body = rootComp.bRepBodies.item(0)
+  edges = adsk.core.ObjectCollection.create()
+  for edge in body.edges:
+      if adsk.core.Circle3D.cast(edge.geometry) or adsk.core.Arc3D.cast(edge.geometry):
+          mid = edge.pointOnEdge
+          if mid.z < 0.1:          # bottom edges (adjust threshold for top: mid.z > height - 0.1)
+              edges.add(edge)
+  # Fallback: if programmatic search found nothing, try activeSelections
+  if edges.count == 0 and ui.activeSelections.count > 0:
+      for _i in range(ui.activeSelections.count):
+          _e = adsk.fusion.BRepEdge.cast(ui.activeSelections.item(_i).entity)
+          if _e:
+              edges.add(_e)
+  if edges.count == 0:
+      raise Exception("SELECTION_REQUIRED: Could not find edges to fillet. Please select the edges.")
+This pattern works for any cylinder regardless of model state context. Adapt `mid.z < 0.1` for
+bottom and `mid.z > (body_height - 0.1)` for top by reading body.boundingBox.maxPoint.z.
 """
 
 _SYSTEM_PROMPT_SUFFIX = """\
