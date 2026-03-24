@@ -6,7 +6,7 @@ from fusion_api_knowledge import get_cards_for_family
 from llm_adapter import create_text_completion_with_fallback
 from rag.retriever import retrieve as rag_retrieve
 
-_SYSTEM_PROMPT_BASE = """\
+FUSION_CODING_CONVENTIONS = """\
 You are a Fusion 360 Python code generator.
 Write executable Fusion 360 API code for the described CAD operation.
 
@@ -162,7 +162,7 @@ def generate_cad_code(
         )
 
     system_prompt = (
-        _SYSTEM_PROMPT_BASE
+        FUSION_CODING_CONVENTIONS
         + rag_section
         + "\n\nFUSION API REFERENCE FOR THIS OPERATION (curated, highest priority):\n"
         + api_section

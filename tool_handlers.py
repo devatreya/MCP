@@ -30,8 +30,8 @@ from bridge_config import (
     MSG_RESET,
     MSG_TAKE_SCREENSHOT,
 )
-from code_generator import generate_cad_code
-from fusion_api_knowledge import apply_api_repairs, find_api_issues
+from code_generator import FUSION_CODING_CONVENTIONS, generate_cad_code
+from fusion_api_knowledge import apply_api_repairs, build_api_guidance, find_api_issues
 from intent_extractor import IntentResult, extract_intent
 from llm_adapter import create_text_completion_with_fallback
 from script_utils import (
@@ -42,6 +42,7 @@ from script_utils import (
     summarize_selection_context,
     wrap_script_with_run,
 )
+from rag.retriever import retrieve as rag_retrieve
 from selection_validator import validate_intent
 from step_planner import plan_steps
 
@@ -711,3 +712,102 @@ def handle_take_screenshot(ctx: HandlerContext) -> dict:
         "image_base64": image_b64,
         "mime_type": "image/png",
     }
+
+
+# ---------------------------------------------------------------------------
+# Tool 7: execute_script  (Approach B — Claude writes Fusion Python directly)
+# ---------------------------------------------------------------------------
+
+def handle_execute_script(
+    ctx: HandlerContext,
+    script: str,
+    description: str = "",
+) -> dict:
+    """MCP tool: execute_script — run raw Fusion 360 Python written by Claude.
+
+    Claude provides the code body only (no 'def run(context):' boilerplate,
+    no import statements). The handler wraps it, ships it to Fusion, and
+    returns a structured result with state diff and any error/traceback so
+    Claude can self-correct in the next turn.
+
+    Pre-injected variables Claude can use directly:
+        app, ui, design, rootComp, sketches
+    All distances must be in centimetres.
+    """
+    # Snapshot state before execution
+    before_response = run_bridge_call(ctx.bridge.get_state())
+    before_state = (
+        before_response.get("data", {}).get("state", {})
+        if before_response.get("ok") else {}
+    )
+
+    # Clean and wrap the raw code body
+    cleaned = clean_generated_code(script)
+    wrapped = wrap_script_with_run(cleaned, clear_model=False)
+
+    # Execute in Fusion
+    exec_response = run_bridge_call(ctx.bridge.execute_script(wrapped))
+
+    if not exec_response.get("ok"):
+        error_msg = exec_response.get("error") or "Script execution failed."
+        traceback_str = exec_response.get("data", {}).get("traceback", "")
+        return {
+            "ok": False,
+            "error": error_msg,
+            "traceback": traceback_str or None,
+            "state_summary": summarize_fusion_state(before_state),
+            "description": description,
+        }
+
+    # Snapshot state after execution
+    after_response = run_bridge_call(ctx.bridge.get_state())
+    after_state = (
+        after_response.get("data", {}).get("state", {})
+        if after_response.get("ok") else before_state
+    )
+
+    return {
+        "ok": True,
+        "state_summary": summarize_fusion_state(after_state),
+        "diff": _compute_diff(before_state, after_state),
+        "description": description,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool 8: get_api_guidance  (Approach B — Claude queries Fusion API knowledge)
+# ---------------------------------------------------------------------------
+
+def handle_get_api_guidance(ctx: HandlerContext, topic: str) -> dict:
+    """MCP tool: get_api_guidance — return Fusion 360 API guidance for a topic.
+
+    Combines three sources:
+      1. FUSION_CODING_CONVENTIONS — coordinate system, pre-injected vars, selection
+         workflow, curved body rules, fillet patterns (from code_generator.py)
+      2. Curated API cards — hand-verified patterns for the topic family
+         (from fusion_api_knowledge.build_api_guidance)
+      3. RAG doc snippets — top-k chunks from the Autodesk API docs vector index
+         (from rag/retriever.retrieve)
+
+    Claude should call this before writing a script for an unfamiliar operation
+    to get accurate API patterns and avoid hallucinated method names.
+    """
+    parts = []
+
+    # 1. Coding conventions (coordinate system, pre-injected vars, etc.)
+    parts.append("## Fusion 360 Coding Conventions\n\n" + FUSION_CODING_CONVENTIONS.strip())
+
+    # 2. Curated API cards for this topic
+    cards_text = build_api_guidance(topic)
+    if cards_text and cards_text.strip():
+        parts.append("## Curated API Patterns\n\n" + cards_text.strip())
+
+    # 3. RAG doc snippets — best-effort; skip if retriever unavailable
+    try:
+        rag_chunks = rag_retrieve(topic, ctx.client, k=4)
+        if rag_chunks:
+            parts.append("## Reference Documentation\n\n" + "\n\n".join(rag_chunks))
+    except Exception:
+        pass  # RAG is optional; don't fail the tool if the index isn't built
+
+    return {"guidance": "\n\n---\n\n".join(parts)}

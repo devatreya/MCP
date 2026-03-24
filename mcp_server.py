@@ -23,6 +23,8 @@ from openai import OpenAI
 from bridge_client import BridgeClient
 from bridge_config import (
     TOOL_CREATE_GEOMETRY,
+    TOOL_EXECUTE_SCRIPT,
+    TOOL_GET_API_GUIDANCE,
     TOOL_GET_DESIGN_STATE,
     TOOL_MODIFY_GEOMETRY,
     TOOL_RESET_DESIGN,
@@ -32,6 +34,8 @@ from bridge_config import (
 from tool_handlers import (
     HandlerContext,
     handle_create_geometry,
+    handle_execute_script,
+    handle_get_api_guidance,
     handle_get_design_state,
     handle_modify_geometry,
     handle_reset_design,
@@ -202,6 +206,55 @@ _TOOLS = [
             "required": [],
         },
     ),
+    # ── Approach B tools ────────────────────────────────────────────────────
+    Tool(
+        name=TOOL_EXECUTE_SCRIPT,
+        description=(
+            "Execute raw Fusion 360 Python written by Claude directly in Fusion 360. "
+            "Provide the code body only — no 'def run(context):', no import statements. "
+            "Pre-injected variables: app, ui, design, rootComp, sketches. "
+            "All distances in centimetres. "
+            "Returns: ok, state_summary (what the model looks like now), diff (bodies added/"
+            "removed/modified), and on failure: error + traceback for self-correction."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "script": {
+                    "type": "string",
+                    "description": "Fusion 360 Python code body to execute.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Optional human-readable label for this operation (for logging).",
+                },
+            },
+            "required": ["script"],
+        },
+    ),
+    Tool(
+        name=TOOL_GET_API_GUIDANCE,
+        description=(
+            "Return Fusion 360 API guidance for a given topic. "
+            "Combines curated API patterns (edge sets, hole workflows, construction planes, etc.), "
+            "Fusion coding conventions (coordinate system, pre-injected variables, selection patterns), "
+            "and RAG-retrieved Autodesk documentation snippets. "
+            "Call this before writing a script for an unfamiliar operation."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": (
+                        "Topic to look up, e.g. 'fillet circular edges cylinder', "
+                        "'extrude cut through all', 'hole on flat face', 'shell body'."
+                    ),
+                },
+            },
+            "required": ["topic"],
+        },
+    ),
 ]
 
 
@@ -258,6 +311,21 @@ async def call_tool(name: str, arguments: dict):
 
         elif name == TOOL_TAKE_SCREENSHOT:
             result = await asyncio.to_thread(handle_take_screenshot, _ctx)
+
+        elif name == TOOL_EXECUTE_SCRIPT:
+            result = await asyncio.to_thread(
+                handle_execute_script,
+                _ctx,
+                arguments["script"],
+                arguments.get("description", ""),
+            )
+
+        elif name == TOOL_GET_API_GUIDANCE:
+            result = await asyncio.to_thread(
+                handle_get_api_guidance,
+                _ctx,
+                arguments["topic"],
+            )
 
         else:
             result = {"ok": False, "error": f"Unknown tool: {name!r}"}

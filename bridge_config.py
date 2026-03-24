@@ -25,3 +25,5 @@ TOOL_GET_DESIGN_STATE = "get_design_state"
 TOOL_VERIFY_GEOMETRY  = "verify_geometry"
 TOOL_RESET_DESIGN     = "reset_design"
 TOOL_TAKE_SCREENSHOT  = "take_screenshot"
+TOOL_EXECUTE_SCRIPT   = "execute_script"    # Approach B: Claude writes code directly
+TOOL_GET_API_GUIDANCE = "get_api_guidance"  # Approach B: Claude queries Fusion API knowledge
