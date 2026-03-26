@@ -119,7 +119,7 @@ class BridgeClient:
             raise ConnectionError("BridgeClient is not connected. Call connect() first.")
 
         request_id = str(uuid.uuid4())
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
         self._pending[request_id] = fut
 
@@ -173,12 +173,34 @@ class BridgeClient:
 # Sync convenience wrapper (for tool_handlers running in a sync MCP context)
 # ---------------------------------------------------------------------------
 
-def run_bridge_call(coro) -> dict:
-    """Run an async bridge coroutine synchronously.
+# Holds a reference to the MCP server's main event loop, set by set_main_loop()
+# during startup. run_bridge_call() uses asyncio.run_coroutine_threadsafe() to
+# schedule coroutines back onto the main loop from asyncio.to_thread workers.
+_main_loop: asyncio.AbstractEventLoop | None = None
 
-    Used by tool_handlers in a sync MCP context.
+
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Store the main event loop. Call this once in mcp_server.main() before
+    serving requests."""
+    global _main_loop
+    _main_loop = loop
+
+
+def run_bridge_call(coro) -> dict:
+    """Run an async bridge coroutine synchronously from any thread.
+
+    Uses asyncio.run_coroutine_threadsafe to schedule the coroutine on the
+    main event loop (set via set_main_loop), which owns the WebSocket
+    connection and all pending futures.
+
+    Falls back to asyncio.run() if the main loop hasn't been set (e.g. in
+    tests that use MockBridgeClient).
     """
-    return asyncio.get_event_loop().run_until_complete(coro)
+    if _main_loop is not None and _main_loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(coro, _main_loop)
+        return future.result(timeout=REQUEST_TIMEOUT_S + 5)
+    # Fallback for test contexts where the loop isn't set
+    return asyncio.run(coro)
 
 
 # ---------------------------------------------------------------------------

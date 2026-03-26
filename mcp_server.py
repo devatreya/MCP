@@ -20,7 +20,7 @@ from mcp.types import Tool, TextContent
 
 from openai import OpenAI
 
-from bridge_client import BridgeClient
+from bridge_client import BridgeClient, set_main_loop
 from bridge_config import (
     TOOL_CREATE_GEOMETRY,
     TOOL_EXECUTE_SCRIPT,
@@ -344,6 +344,10 @@ async def main():
     global _ctx
 
     print("Fusion 360 MCP server starting...", file=sys.stderr)
+
+    # Store the main event loop so run_bridge_call() can schedule async
+    # coroutines back onto it from asyncio.to_thread worker threads.
+    set_main_loop(asyncio.get_event_loop())
 
     # Build OpenAI client
     openai_client = OpenAI(
