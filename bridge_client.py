@@ -115,8 +115,9 @@ class BridgeClient:
         Raises TimeoutError if no response arrives within REQUEST_TIMEOUT_S.
         Raises ConnectionError if the WebSocket is not connected.
         """
+        # Auto-reconnect if not connected (e.g. server started before add-in was running)
         if not self._ws:
-            raise ConnectionError("BridgeClient is not connected. Call connect() first.")
+            await self.connect()
 
         request_id = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
@@ -132,6 +133,8 @@ class BridgeClient:
             await self._ws.send(json.dumps(envelope))
         except Exception as exc:
             self._pending.pop(request_id, None)
+            # Connection dropped — reset and let the caller retry
+            self._ws = None
             raise ConnectionError(f"BridgeClient send failed: {exc}") from exc
 
         try:
